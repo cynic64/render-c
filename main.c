@@ -289,6 +289,16 @@ int main() {
 	VkShaderModule vs = load_shader(device, "shader.vs.spv");
 	VkShaderModule fs = load_shader(device, "shader.vs.spv");
 
+	VkPipelineShaderStageCreateInfo shaders[2];
+	shaders[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shaders[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+	shaders[0].module = vs;
+	shaders[0].pName = "main";
+	shaders[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+	shaders[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+	shaders[1].module = fs;
+	shaders[1].pName = "main";
+
 	// Render pass
 	VkAttachmentDescription attach_desc = {0};
 	attach_desc.format = sc_format;
@@ -318,6 +328,14 @@ int main() {
 
 	VkRenderPass rpass;
 	res = vkCreateRenderPass(device, &rpass_info, NULL, &rpass);
+	assert(res == VK_SUCCESS);
+
+	// Pipeline layout
+	VkPipelineLayoutCreateInfo pipeline_lt_info = {0};
+	pipeline_lt_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+	VkPipelineLayout pipeline_lt;
+	res = vkCreatePipelineLayout(device, &pipeline_lt_info, NULL, &pipeline_lt);
 	assert(res == VK_SUCCESS);
 
 	// Main loop
