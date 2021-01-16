@@ -2,6 +2,8 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "swapchain.h"
+
 #include <stdio.h>
 #include <assert.h>
 #include <stdlib.h>
@@ -211,63 +213,15 @@ int main() {
 	VkQueue queue;
 	vkGetDeviceQueue(device, queue_fam, 0, &queue);
 
-	// Choose swapchain settings
-	VkSurfaceCapabilitiesKHR surface_caps;
-	vkGetPhysicalDeviceSurfaceCapabilitiesKHR(phys_dev, surface, &surface_caps);
-
-	uint32_t format_ct = 0;
-	vkGetPhysicalDeviceSurfaceFormatsKHR(phys_dev, surface, &format_ct, NULL);
-	VkSurfaceFormatKHR* formats = malloc(format_ct * sizeof(formats[0]));
-	vkGetPhysicalDeviceSurfaceFormatsKHR(phys_dev, surface, &format_ct, formats);
-
-	uint32_t present_mode_ct = 0;
-	vkGetPhysicalDeviceSurfacePresentModesKHR(phys_dev, surface, &present_mode_ct, NULL);
-	VkPresentModeKHR* present_modes = malloc(present_mode_ct * sizeof(present_modes[0]));
-	vkGetPhysicalDeviceSurfacePresentModesKHR(phys_dev, surface, &present_mode_ct, present_modes);
-
-	VkSurfaceFormatKHR sc_surface_format = formats[0];
-	for (int i = 0; i < format_ct; ++i) {
-                if (formats[i].format == SC_FORMAT_PREF) sc_surface_format = formats[i];
-	}
-	const VkFormat sc_format = sc_surface_format.format;
-
-	VkPresentModeKHR sc_present_mode = present_modes[0];
-	for (int i = 0; i < present_mode_ct; ++i) {
-                if (present_modes[i] == SC_PRESENT_MODE_PREF) sc_present_mode = present_modes[i];
-	}
-
-	const uint32_t swidth = surface_caps.maxImageExtent.width, sheight = surface_caps.maxImageExtent.height;
-	assert(swidth != UINT32_MAX && sheight != UINT32_MAX);
-
-	const uint32_t chosen_image_ct = surface_caps.maxImageCount > 0 ?
-		surface_caps.maxImageCount : surface_caps.minImageCount;
-
-	// Create swapchain
-	VkSwapchainCreateInfoKHR sc_info = {0};
-	sc_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-	sc_info.surface = surface;
-	sc_info.minImageCount = chosen_image_ct;
-	sc_info.imageFormat = sc_format;
-	sc_info.imageColorSpace = sc_surface_format.colorSpace;
-	sc_info.imageExtent.width = swidth;
-	sc_info.imageExtent.height = sheight;
-	sc_info.imageArrayLayers = 1;
-	sc_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-	sc_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	sc_info.preTransform = surface_caps.currentTransform;
-	sc_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-	sc_info.presentMode = sc_present_mode;
-	sc_info.clipped = VK_TRUE;
-
-	VkSwapchainKHR swapchain;
-	res = vkCreateSwapchainKHR(device, &sc_info, NULL, &swapchain);
-	assert(res == VK_SUCCESS);
+	// Swapchain, framebuffers, image fences
+	struct Swapchain swapchain;
+	swapchain_create(surface, phys_dev, device, VK_FORMAT_B8G8R8A8_SRGB, VK_PRESENT_MODE_IMMEDIATE_KHR, &swapchain);
 
 	// Get images
 	uint32_t image_ct = 0; // Not necessarily what we chose
-	vkGetSwapchainImagesKHR(device, swapchain, &image_ct, NULL);
+	vkGetSwapchainImagesKHR(device, swapchain.handle, &image_ct, NULL);
 	VkImage* images = malloc(image_ct * sizeof(images[0]));
-	vkGetSwapchainImagesKHR(device, swapchain, &image_ct, images);
+	vkGetSwapchainImagesKHR(device, swapchain.handle, &image_ct, images);
 
 	VkImageView* image_views = malloc(image_ct * sizeof(image_views[0]));
 	for (int i = 0; i < image_ct; ++i) {
@@ -275,7 +229,7 @@ int main() {
         	view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         	view_info.image = images[i];
         	view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        	view_info.format = sc_format;
+        	view_info.format = swapchain.format;
         	view_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
         	view_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
         	view_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -305,7 +259,7 @@ int main() {
 
 	// Render pass
 	VkAttachmentDescription attach_desc = {0};
-	attach_desc.format = sc_format;
+	attach_desc.format = swapchain.format;
 	attach_desc.samples = VK_SAMPLE_COUNT_1_BIT;
 	attach_desc.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 	attach_desc.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -428,8 +382,8 @@ int main() {
     		fb_info.renderPass = rpass;
     		fb_info.attachmentCount = 1;
     		fb_info.pAttachments = attachments;
-    		fb_info.width = swidth;
-    		fb_info.height = sheight;
+    		fb_info.width = swapchain.width;
+    		fb_info.height = swapchain.height;
     		fb_info.layers = 1;
 
     		res = vkCreateFramebuffer(device, &fb_info, NULL, &fbs[i]);
@@ -497,7 +451,7 @@ int main() {
 
                 // Acquire an image
                 uint32_t image_idx;
-                vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_avail_sem, VK_NULL_HANDLE, &image_idx);
+                vkAcquireNextImageKHR(device, swapchain.handle, UINT64_MAX, image_avail_sem, VK_NULL_HANDLE, &image_idx);
 
                 // Record command buffer
                 VkCommandBufferBeginInfo cbuf_begin_info = {0};
@@ -511,8 +465,8 @@ int main() {
                 cbuf_rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
                 cbuf_rpass_info.renderPass = rpass;
                 cbuf_rpass_info.framebuffer = fbs[image_idx];
-		cbuf_rpass_info.renderArea.extent.width = swidth;
-		cbuf_rpass_info.renderArea.extent.height = sheight;
+		cbuf_rpass_info.renderArea.extent.width = swapchain.width;
+		cbuf_rpass_info.renderArea.extent.height = swapchain.height;
 		cbuf_rpass_info.clearValueCount = 1;
 		cbuf_rpass_info.pClearValues = &clear_color;
 		vkCmdBeginRenderPass(cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
@@ -520,15 +474,15 @@ int main() {
 		vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
 		VkViewport viewport = {0};
-		viewport.width = swidth;
-		viewport.height = sheight;
+		viewport.width = swapchain.width;
+		viewport.height = swapchain.height;
 		viewport.minDepth = 0.0F;
 		viewport.maxDepth = 1.0F;
 		vkCmdSetViewport(cbuf, 0, 1, &viewport);
 
 		VkRect2D scissor = {0};
-		scissor.extent.width = swidth;
-		scissor.extent.height = sheight;
+		scissor.extent.width = swapchain.width;
+		scissor.extent.height = swapchain.height;
 		vkCmdSetScissor(cbuf, 0, 1, &scissor);
 
 		vkCmdDraw(cbuf, 3, 1, 0, 0);
@@ -569,7 +523,7 @@ int main() {
 		present_info.waitSemaphoreCount = 1;
 		present_info.pWaitSemaphores = &render_done_sem;
 		present_info.swapchainCount = 1;
-		present_info.pSwapchains = &swapchain;
+		present_info.pSwapchains = &swapchain.handle;
 		present_info.pImageIndices = &image_idx;
 
 		res = vkQueuePresentKHR(queue, &present_info);
@@ -612,7 +566,7 @@ int main() {
         	vkDestroyFramebuffer(device, fbs[i], NULL);
 	}
 
-	vkDestroySwapchainKHR(device, swapchain, NULL);
+	vkDestroySwapchainKHR(device, swapchain.handle, NULL);
 
 	vkDestroyDevice(device, NULL);
 
