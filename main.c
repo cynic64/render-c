@@ -6,6 +6,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 const int VALIDATION_LAYER_CT = 1;
 const char* VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
@@ -18,6 +19,8 @@ const char* DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
+
+const int CBUF_CT = 4;
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
                                                   VkDebugUtilsMessageTypeFlagsEXT type,
@@ -35,7 +38,8 @@ VkShaderModule load_shader(VkDevice device, const char* path) {
         rewind(fp);
 
         char* buf = malloc(byte_ct);
-        fread(buf, 1, byte_ct, fp);
+        const int read_bytes = fread(buf, 1, byte_ct, fp);
+        assert(read_bytes == byte_ct);
         fclose(fp);
 
         VkShaderModuleCreateInfo info = {0};
@@ -287,9 +291,9 @@ int main() {
 
 	// Load shaders
 	VkShaderModule vs = load_shader(device, "shader.vs.spv");
-	VkShaderModule fs = load_shader(device, "shader.vs.spv");
+	VkShaderModule fs = load_shader(device, "shader.fs.spv");
 
-	VkPipelineShaderStageCreateInfo shaders[2];
+	VkPipelineShaderStageCreateInfo shaders[2] = {0};
 	shaders[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 	shaders[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
 	shaders[0].module = vs;
@@ -319,12 +323,22 @@ int main() {
 	subpass.colorAttachmentCount = 1;
 	subpass.pColorAttachments = &attach_ref;
 
+	VkSubpassDependency subpass_dep = {0};
+	subpass_dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+	subpass_dep.dstSubpass = 0;
+	subpass_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	subpass_dep.srcAccessMask = 0;
+	subpass_dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+	subpass_dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
 	VkRenderPassCreateInfo rpass_info = {0};
 	rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
 	rpass_info.attachmentCount = 1;
 	rpass_info.pAttachments = &attach_desc;
 	rpass_info.subpassCount = 1;
 	rpass_info.pSubpasses = &subpass;
+	rpass_info.dependencyCount = 1;
+	rpass_info.pDependencies = &subpass_dep;
 
 	VkRenderPass rpass;
 	res = vkCreateRenderPass(device, &rpass_info, NULL, &rpass);
@@ -338,18 +352,265 @@ int main() {
 	res = vkCreatePipelineLayout(device, &pipeline_lt_info, NULL, &pipeline_lt);
 	assert(res == VK_SUCCESS);
 
+	// Pipeline
+	VkPipelineVertexInputStateCreateInfo input_info = {0};
+	input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+	VkPipelineInputAssemblyStateCreateInfo input_assembly = {0};
+	input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+	input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+	input_assembly.primitiveRestartEnable = VK_FALSE;
+
+	VkPipelineRasterizationStateCreateInfo rasterizer = {0};
+	rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+	rasterizer.depthClampEnable = VK_FALSE;
+	rasterizer.rasterizerDiscardEnable = VK_FALSE;
+	rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+	rasterizer.lineWidth = 1.0F;
+	rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+	rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+	rasterizer.depthBiasEnable = VK_FALSE;
+
+	VkPipelineViewportStateCreateInfo viewport_state = {0};
+	viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+	viewport_state.viewportCount = 1;
+	viewport_state.scissorCount = 1;
+
+	VkPipelineMultisampleStateCreateInfo multisampling = {0};
+	multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+	multisampling.sampleShadingEnable = VK_FALSE;
+	multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+	VkPipelineColorBlendAttachmentState color_blend_attach = {0};
+	color_blend_attach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+	color_blend_attach.blendEnable = VK_FALSE;
+
+	VkPipelineColorBlendStateCreateInfo color_blend = {0};
+	color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+	color_blend.logicOpEnable = VK_FALSE;
+	color_blend.attachmentCount = 1;
+	color_blend.pAttachments = &color_blend_attach;
+
+	VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT,
+	                               VK_DYNAMIC_STATE_SCISSOR};
+
+	VkPipelineDynamicStateCreateInfo dyn_state_info = {0};
+	dyn_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+	dyn_state_info.dynamicStateCount = sizeof(dyn_states) / sizeof(dyn_states[0]);
+	dyn_state_info.pDynamicStates = dyn_states;
+
+	VkGraphicsPipelineCreateInfo pipeline_info = {0};
+	pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+	pipeline_info.stageCount = sizeof(shaders) / sizeof(shaders[0]);
+	pipeline_info.pStages = shaders;
+	pipeline_info.pVertexInputState = &input_info;
+	pipeline_info.pInputAssemblyState = &input_assembly;
+	pipeline_info.pRasterizationState = &rasterizer;
+	pipeline_info.pViewportState = &viewport_state;
+	pipeline_info.pMultisampleState = &multisampling;
+	pipeline_info.pColorBlendState = &color_blend;
+	pipeline_info.pDynamicState = &dyn_state_info;
+	pipeline_info.layout = pipeline_lt;
+	pipeline_info.renderPass = rpass;
+	pipeline_info.subpass = 0;
+
+	VkPipeline pipeline;
+	res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &pipeline);
+	assert(res == VK_SUCCESS);
+
+	// Framebuffers
+	VkFramebuffer* fbs = malloc(image_ct * sizeof(fbs[0]));
+	for (int i = 0; i < image_ct; ++i) {
+    		VkImageView attachments[] = {image_views[i]};
+
+    		VkFramebufferCreateInfo fb_info = {0};
+    		fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    		fb_info.renderPass = rpass;
+    		fb_info.attachmentCount = 1;
+    		fb_info.pAttachments = attachments;
+    		fb_info.width = swidth;
+    		fb_info.height = sheight;
+    		fb_info.layers = 1;
+
+    		res = vkCreateFramebuffer(device, &fb_info, NULL, &fbs[i]);
+    		assert(res == VK_SUCCESS);
+	}
+
+	// Command pool
+	VkCommandPoolCreateInfo cpool_info = {0};
+	cpool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+	cpool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+	cpool_info.queueFamilyIndex = queue_fam;
+
+	VkCommandPool cpool;
+	res = vkCreateCommandPool(device, &cpool_info, NULL, &cpool);
+	assert(res == VK_SUCCESS);
+
+	// Allocate command buffers
+	VkCommandBufferAllocateInfo cbuf_info = {0};
+	cbuf_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+	cbuf_info.commandPool = cpool;
+	cbuf_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	cbuf_info.commandBufferCount = CBUF_CT;
+
+	VkCommandBuffer* cbufs = malloc(CBUF_CT * sizeof(cbufs[0]));
+	res = vkAllocateCommandBuffers(device, &cbuf_info, cbufs);
+	assert(res == VK_SUCCESS);
+
+	// Sync objects
+	VkFence* render_done_fences = malloc(CBUF_CT * sizeof(render_done_fences[0]));
+	VkSemaphore* image_avail_sems = malloc(CBUF_CT * sizeof(image_avail_sems[0]));
+	VkSemaphore* render_done_sems = malloc(CBUF_CT * sizeof(render_done_sems[0]));
+
+	for (int i = 0; i < CBUF_CT; ++i) {
+        	VkFenceCreateInfo fence_info = {0};
+        	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        	fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        	vkCreateFence(device, &fence_info, NULL, &render_done_fences[i]);
+
+		VkSemaphoreCreateInfo sem_info = {0};
+		sem_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+		vkCreateSemaphore(device, &sem_info, NULL, &image_avail_sems[i]);
+		vkCreateSemaphore(device, &sem_info, NULL, &render_done_sems[i]);
+	}
+	VkFence* image_fences = malloc(image_ct * sizeof(image_fences[0]));
+	for (int i = 0; i < image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
+
 	// Main loop
+	int frame_ct = 0;
+	struct timespec start_time;
+	clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
         while (!glfwWindowShouldClose(window)) {
+                int sync_idx = frame_ct % CBUF_CT;
+
+                VkFence render_done_fence = render_done_fences[sync_idx];
+                VkSemaphore image_avail_sem = image_avail_sems[sync_idx];
+                VkSemaphore render_done_sem = render_done_sems[sync_idx];
+
+                // Wait for the frame using these sync objects to finish rendering
+                res = vkWaitForFences(device, 1, &render_done_fence, VK_TRUE, UINT64_MAX);
+                assert(res == VK_SUCCESS);
+
+                // Reset command buffer
+                VkCommandBuffer cbuf = cbufs[sync_idx];
+                vkResetCommandBuffer(cbuf, 0);
+
+                // Acquire an image
+                uint32_t image_idx;
+                vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_avail_sem, VK_NULL_HANDLE, &image_idx);
+
+                // Record command buffer
+                VkCommandBufferBeginInfo cbuf_begin_info = {0};
+                cbuf_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+                cbuf_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+                vkBeginCommandBuffer(cbuf, &cbuf_begin_info);
+
+		VkClearValue clear_color = {0.0F, 0.0F, 0.0F, 1.0F};
+
+                VkRenderPassBeginInfo cbuf_rpass_info = {0};
+                cbuf_rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+                cbuf_rpass_info.renderPass = rpass;
+                cbuf_rpass_info.framebuffer = fbs[image_idx];
+		cbuf_rpass_info.renderArea.extent.width = swidth;
+		cbuf_rpass_info.renderArea.extent.height = sheight;
+		cbuf_rpass_info.clearValueCount = 1;
+		cbuf_rpass_info.pClearValues = &clear_color;
+		vkCmdBeginRenderPass(cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
+
+		vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+		VkViewport viewport = {0};
+		viewport.width = swidth;
+		viewport.height = sheight;
+		viewport.minDepth = 0.0F;
+		viewport.maxDepth = 1.0F;
+		vkCmdSetViewport(cbuf, 0, 1, &viewport);
+
+		VkRect2D scissor = {0};
+		scissor.extent.width = swidth;
+		scissor.extent.height = sheight;
+		vkCmdSetScissor(cbuf, 0, 1, &scissor);
+
+		vkCmdDraw(cbuf, 3, 1, 0, 0);
+		vkCmdEndRenderPass(cbuf);
+
+		res = vkEndCommandBuffer(cbuf);
+		assert(res == VK_SUCCESS);
+
+                // Wait until whoever is rendering to the image is done
+                if (image_fences[image_idx] != VK_NULL_HANDLE)
+                        vkWaitForFences(device, 1, &image_fences[image_idx], VK_TRUE, UINT64_MAX);
+
+		// Reset fence
+                res = vkResetFences(device, 1, &render_done_fence);
+                assert(res == VK_SUCCESS);
+
+		// Mark it as in use by us
+		image_fences[image_idx] = render_done_fence;
+
+		// Submit
+		VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		VkSubmitInfo submit_info = {0};
+		submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submit_info.waitSemaphoreCount = 1;
+		submit_info.pWaitSemaphores = &image_avail_sem;
+		submit_info.pWaitDstStageMask = &wait_stage;
+		submit_info.commandBufferCount = 1;
+		submit_info.pCommandBuffers = &cbuf;
+		submit_info.signalSemaphoreCount = 1;
+		submit_info.pSignalSemaphores = &render_done_sem;
+
+		res = vkQueueSubmit(queue, 1, &submit_info, render_done_fence);
+		assert(res == VK_SUCCESS);
+
+		// Present
+		VkPresentInfoKHR present_info = {0};
+		present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		present_info.waitSemaphoreCount = 1;
+		present_info.pWaitSemaphores = &render_done_sem;
+		present_info.swapchainCount = 1;
+		present_info.pSwapchains = &swapchain;
+		present_info.pImageIndices = &image_idx;
+
+		res = vkQueuePresentKHR(queue, &present_info);
+		assert(res == VK_SUCCESS);
+
                 glfwPollEvents();
+                ++frame_ct;
         }
 
+        struct timespec stop_time;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &stop_time);
+        double elapsed = (double) ((stop_time.tv_sec * 1000000000 + stop_time.tv_nsec)
+        	- (start_time.tv_sec * 1000000000 + start_time.tv_nsec)) / 1000000000.0D;
+        double fps = (double) frame_ct / elapsed;
+        printf("FPS: %.2f\n", fps);
+
 	// Cleanup
+	vkDeviceWaitIdle(device);
+
+	for (int i = 0; i < CBUF_CT; ++i) {
+        	vkDestroyFence(device, render_done_fences[i], NULL);
+        	vkDestroySemaphore(device, image_avail_sems[i], NULL);
+        	vkDestroySemaphore(device, render_done_sems[i], NULL);
+	}
+
+	vkDestroyPipeline(device, pipeline, NULL);
+
+	vkDestroyPipelineLayout(device, pipeline_lt, NULL);
+
+	vkDestroyCommandPool(device, cpool, NULL);
 	vkDestroyRenderPass(device, rpass, NULL);
 
 	vkDestroyShaderModule(device, vs, NULL);
 	vkDestroyShaderModule(device, fs, NULL);
 
-	for (int i = 0; i < image_ct; ++i) vkDestroyImageView(device, image_views[i], NULL);
+	for (int i = 0; i < image_ct; ++i) {
+        	rpass_info.dependencyCount = 1;
+        	rpass_info.pDependencies = &subpass_dep;
+        	vkDestroyImageView(device, image_views[i], NULL);
+        	vkDestroyFramebuffer(device, fbs[i], NULL);
+	}
 
 	vkDestroySwapchainKHR(device, swapchain, NULL);
 
