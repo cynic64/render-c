@@ -29,6 +29,9 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFla
                                                   const VkDebugUtilsMessengerCallbackDataEXT* cback_data,
                                                   void* user_data)
 {
+        (void)(severity);
+        (void)(type);
+        (void)(user_data);
         fprintf(stderr, "%s\n", cback_data->pMessage);
         return VK_FALSE;
 }
@@ -490,7 +493,7 @@ int main() {
                 cbuf_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 vkBeginCommandBuffer(cbuf, &cbuf_begin_info);
 
-                VkClearValue clear_color = {0.0F, 0.0F, 0.0F, 1.0F};
+                VkClearValue clear_color = {{0.0F, 0.0F, 0.0F, 1.0F}};
 
                 VkRenderPassBeginInfo cbuf_rpass_info = {0};
                 cbuf_rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -568,7 +571,7 @@ int main() {
         struct timespec stop_time;
         clock_gettime(CLOCK_MONOTONIC_RAW, &stop_time);
         double elapsed = (double) ((stop_time.tv_sec * 1000000000 + stop_time.tv_nsec)
-                                - (start_time.tv_sec * 1000000000 + start_time.tv_nsec)) / 1000000000.0D;
+                                - (start_time.tv_sec * 1000000000 + start_time.tv_nsec)) / 1000000000.0F;
         double fps = (double) frame_ct / elapsed;
         printf("FPS: %.2f\n", fps);
 
