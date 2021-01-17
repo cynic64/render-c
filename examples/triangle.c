@@ -3,9 +3,8 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#include "../src/render_proc.h"
-
 #include "../src/ll/buffer.h"
+#include "../src/ll/render_proc.h"
 #include "../src/ll/shader.h"
 #include "../src/ll/swapchain.h"
 #include "../src/ll/sync.h"
@@ -229,16 +228,33 @@ int main() {
         VkQueue queue;
         vkGetDeviceQueue(device, queue_fam, 0, &queue);
 
-	struct Buffer vbuf;
-	buffer_create(phys_dev, device, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        // Command pool
+        VkCommandPoolCreateInfo cpool_info = {0};
+        cpool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        cpool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        cpool_info.queueFamilyIndex = queue_fam;
+
+        VkCommandPool cpool;
+        res = vkCreateCommandPool(device, &cpool_info, NULL, &cpool);
+        assert(res == VK_SUCCESS);
+
+	// Vertex buffer
+	struct Buffer staging;
+	buffer_create(phys_dev, device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+	              sizeof(VERTICES), &staging);
+	buffer_mem_write(device, staging.mem, sizeof(VERTICES), VERTICES);
+
+	struct Buffer vbuf;
+	buffer_create(phys_dev, device, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 	              sizeof(VERTICES), &vbuf);
 
-        // Fill vertex buffer
-        void *data;
-        vkMapMemory(device, vbuf.mem, 0, vbuf.size, 0, &data);
-	memcpy(data, VERTICES, vbuf.size);
-        vkUnmapMemory(device, vbuf.mem);
+	VkCommandBuffer copy_cbuf;
+	cbuf_alloc(device, cpool, &copy_cbuf);
+	buffer_copy(queue, copy_cbuf, staging.handle, vbuf.handle, vbuf.size);
+
+        buffer_destroy(device, &staging);
 
         // Swapchain
         struct Swapchain swapchain;
@@ -396,16 +412,6 @@ int main() {
         // Framebuffers
         VkFramebuffer* fbs = malloc(swapchain.image_ct * sizeof(fbs[0]));
         fbs_create(device, rpass, swapchain.width, swapchain.height, swapchain.image_ct, swapchain.views, fbs);
-
-        // Command pool
-        VkCommandPoolCreateInfo cpool_info = {0};
-        cpool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        cpool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        cpool_info.queueFamilyIndex = queue_fam;
-
-        VkCommandPool cpool;
-        res = vkCreateCommandPool(device, &cpool_info, NULL, &cpool);
-        assert(res == VK_SUCCESS);
 
         // Render processes
         uint32_t rproc_ct = CONCURRENT_FRAMES_MAX;

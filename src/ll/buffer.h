@@ -3,7 +3,10 @@
 
 #include <vulkan/vulkan.h>
 
+#include "cbuf.h"
+
 #include <assert.h>
+#include <string.h>
 
 struct Buffer {
         VkBuffer handle;
@@ -67,6 +70,25 @@ void buffer_create(VkPhysicalDevice phys_dev, VkDevice device,
 void buffer_destroy(VkDevice device, struct Buffer* buf) {
         vkDestroyBuffer(device, buf->handle, NULL);
         vkFreeMemory(device, buf->mem, NULL);
+}
+
+void buffer_mem_write(VkDevice device, VkDeviceMemory mem, VkDeviceSize size, const void* data) {
+        void *mapped;
+        vkMapMemory(device, mem, 0, size, 0, &mapped);
+	memcpy(mapped, data, size);
+        vkUnmapMemory(device, mem);
+}
+
+void buffer_copy(VkQueue queue, VkCommandBuffer cbuf, VkBuffer src, VkBuffer dst, VkDeviceSize size) {
+        cbuf_begin_onetime(cbuf);
+
+        VkBufferCopy copy_region = {0};
+        copy_region.size = size;
+        vkCmdCopyBuffer(cbuf, src, dst, 1, &copy_region);
+
+        vkEndCommandBuffer(cbuf);
+
+        cbuf_submit_wait(queue, cbuf);
 }
 
 #endif // LL_BUFFER_H

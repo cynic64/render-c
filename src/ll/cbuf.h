@@ -14,5 +14,22 @@ void cbuf_alloc(VkDevice device, VkCommandPool cpool, VkCommandBuffer* cbuf) {
         assert(res == VK_SUCCESS);
 }
 
+void cbuf_begin_onetime(VkCommandBuffer cbuf) {
+        VkCommandBufferBeginInfo info = {0};
+        info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkBeginCommandBuffer(cbuf, &info);
+}
+
+void cbuf_submit_wait(VkQueue queue, VkCommandBuffer cbuf) {
+        VkSubmitInfo info = {0};
+        info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        info.commandBufferCount = 1;
+        info.pCommandBuffers = &cbuf;
+
+        vkQueueSubmit(queue, 1, &info, VK_NULL_HANDLE);
+        vkQueueWaitIdle(queue);
+}
+
 #endif // LL_CBUF_H
 
