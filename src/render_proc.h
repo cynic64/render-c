@@ -1,8 +1,8 @@
 #ifndef LL_RENDER_PROC_H
 #define LL_RENDER_PROC_H
 
-#include "cbuf.h"
-#include "sync.h"
+#include "ll/cbuf.h"
+#include "ll/sync.h"
 
 struct RenderProc {
         VkCommandBuffer cbuf;
