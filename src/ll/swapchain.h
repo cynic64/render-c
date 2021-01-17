@@ -1,5 +1,5 @@
-#ifndef swapchain_h_INCLUDED
-#define swapchain_h_INCLUDED
+#ifndef LL_SWAPCHAIN_H
+#define LL_SWAPCHAIN_H
 
 #include <vulkan/vulkan.h>
 #include <assert.h>
@@ -112,5 +112,5 @@ void swapchain_destroy(VkDevice device, struct Swapchain* sc) {
         free(sc->views);
 }
 
-#endif // swapchain_h_INCLUDED
+#endif // LL_SWAPCHAIN_H
 

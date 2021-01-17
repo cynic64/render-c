@@ -1,11 +1,16 @@
+#include <cglm/cglm.h>
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "../src/ll/buffer.h"
+#include "../src/ll/render_proc.h"
+#include "../src/ll/shader.h"
 #include "../src/ll/swapchain.h"
+#include "../src/ll/sync.h"
 
-#include <stdio.h>
 #include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -22,7 +27,16 @@ const int DEVICE_EXT_CT = 1;
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 
-const int CBUF_CT = 4;
+const int CONCURRENT_FRAMES_MAX = 4;
+
+struct Vertex {
+        vec2 pos;
+        vec3 color;
+};
+
+const struct Vertex VERTICES[] = {{{0.0F, -0.8F}, {1.0F, 0.0F, 0.0F}},
+                                   {{-0.8F, 0.8F}, {0.0F, 1.0F, 0.0F}},
+                                   {{0.8F, 0.8F}, {0.0F, 0.0F, 1.0F}}};
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
                                                   VkDebugUtilsMessageTypeFlagsEXT type,
@@ -34,33 +48,6 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFla
         (void)(user_data);
         fprintf(stderr, "%s\n", cback_data->pMessage);
         return VK_FALSE;
-}
-
-VkShaderModule load_shader(VkDevice device, const char* path) {
-        FILE *fp = fopen(path, "r");
-        assert(fp != NULL);
-
-        fseek(fp, 0L, SEEK_END);
-        const int byte_ct = ftell(fp);
-        rewind(fp);
-
-        char* buf = malloc(byte_ct);
-        const int read_bytes = fread(buf, 1, byte_ct, fp);
-        assert(read_bytes == byte_ct);
-        fclose(fp);
-
-        VkShaderModuleCreateInfo info = {0};
-        info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-        info.codeSize = byte_ct;
-        info.pCode = (const uint32_t*) buf;
-
-        VkShaderModule shader;
-        VkResult res = vkCreateShaderModule(device, &info, NULL, &shader);
-        assert(res == VK_SUCCESS);
-
-        free(buf);
-
-        return shader;
 }
 
 // Memory must be preallocated
@@ -171,8 +158,7 @@ int main() {
 
         // Create debug messenger
         VkDebugUtilsMessengerEXT debug_msgr;
-        PFN_vkCreateDebugUtilsMessengerEXT debug_create_fun =
-                (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+        PFN_vkCreateDebugUtilsMessengerEXT debug_create_fun = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
         assert(debug_create_fun != NULL);
         debug_create_fun(instance, &debug_info, NULL, &debug_msgr);
 
@@ -242,13 +228,40 @@ int main() {
         VkQueue queue;
         vkGetDeviceQueue(device, queue_fam, 0, &queue);
 
+	struct Buffer vbuf;
+	buffer_create(phys_dev, device, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+	              sizeof(VERTICES), &vbuf);
+
+        // Fill vertex buffer
+        void *data;
+        vkMapMemory(device, vbuf.mem, 0, vbuf.size, 0, &data);
+	memcpy(data, VERTICES, vbuf.size);
+        vkUnmapMemory(device, vbuf.mem);
+
         // Swapchain
         struct Swapchain swapchain;
         swapchain_create(surface, phys_dev, device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
+        // Vertex input
+        VkVertexInputBindingDescription vtx_bind_desc = {0};
+        vtx_bind_desc.binding = 0;
+        vtx_bind_desc.stride = sizeof(struct Vertex);
+        vtx_bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        VkVertexInputAttributeDescription vtx_attr_descs[2] = {0};
+        vtx_attr_descs[0].binding = 0;
+        vtx_attr_descs[0].location = 0;
+        vtx_attr_descs[0].format = VK_FORMAT_R32G32_SFLOAT;
+        vtx_attr_descs[0].offset = offsetof(struct Vertex, pos);
+        vtx_attr_descs[1].binding = 0;
+        vtx_attr_descs[1].location = 1;
+        vtx_attr_descs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        vtx_attr_descs[1].offset = offsetof(struct Vertex, color);
+
         // Load shaders
-        VkShaderModule vs = load_shader(device, "shaders/shader.vs.spv");
-        VkShaderModule fs = load_shader(device, "shaders/shader.fs.spv");
+        VkShaderModule vs = load_shader(device, "shaders/triangle/shader.vs.spv");
+        VkShaderModule fs = load_shader(device, "shaders/triangle/shader.fs.spv");
 
         VkPipelineShaderStageCreateInfo shaders[2] = {0};
         shaders[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -312,6 +325,10 @@ int main() {
         // Pipeline
         VkPipelineVertexInputStateCreateInfo input_info = {0};
         input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        input_info.vertexBindingDescriptionCount = 1;
+        input_info.pVertexBindingDescriptions = &vtx_bind_desc;
+        input_info.vertexAttributeDescriptionCount = 2;
+        input_info.pVertexAttributeDescriptions = vtx_attr_descs;
 
         VkPipelineInputAssemblyStateCreateInfo input_assembly = {0};
         input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -325,7 +342,7 @@ int main() {
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0F;
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
 
         VkPipelineViewportStateCreateInfo viewport_state = {0};
@@ -389,34 +406,12 @@ int main() {
         res = vkCreateCommandPool(device, &cpool_info, NULL, &cpool);
         assert(res == VK_SUCCESS);
 
-        // Allocate command buffers
-        VkCommandBufferAllocateInfo cbuf_info = {0};
-        cbuf_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        cbuf_info.commandPool = cpool;
-        cbuf_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cbuf_info.commandBufferCount = CBUF_CT;
+        // Render processes
+        uint32_t rproc_ct = CONCURRENT_FRAMES_MAX;
+        struct RenderProc* rprocs = malloc(rproc_ct * sizeof(rprocs[0]));
+        for (int i = 0; i < rproc_ct; ++i) render_proc_create(device, cpool, &rprocs[i]);
 
-        VkCommandBuffer* cbufs = malloc(CBUF_CT * sizeof(cbufs[0]));
-        res = vkAllocateCommandBuffers(device, &cbuf_info, cbufs);
-        assert(res == VK_SUCCESS);
-
-        // Sync objects
-        VkFence* render_done_fences = malloc(CBUF_CT * sizeof(render_done_fences[0]));
-        VkSemaphore* image_avail_sems = malloc(CBUF_CT * sizeof(image_avail_sems[0]));
-        VkSemaphore* render_done_sems = malloc(CBUF_CT * sizeof(render_done_sems[0]));
-
-        for (int i = 0; i < CBUF_CT; ++i) {
-                VkFenceCreateInfo fence_info = {0};
-                fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-                fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-                vkCreateFence(device, &fence_info, NULL, &render_done_fences[i]);
-
-                VkSemaphoreCreateInfo sem_info = {0};
-                sem_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-                vkCreateSemaphore(device, &sem_info, NULL, &image_avail_sems[i]);
-                vkCreateSemaphore(device, &sem_info, NULL, &render_done_sems[i]);
-        }
-
+	// Image fences
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
         for (int i = 0; i < swapchain.image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
 
@@ -445,21 +440,11 @@ int main() {
                         fbs_create(device, rpass, swapchain.width, swapchain.height,
                                    swapchain.image_ct, swapchain.views, fbs);
 
-                        for (int i = 0; i < CBUF_CT; ++i) {
-                                vkDestroyFence(device, render_done_fences[i], NULL);
-                                vkDestroySemaphore(device, image_avail_sems[i], NULL);
-                                vkDestroySemaphore(device, render_done_sems[i], NULL);
+			for (int i = 0; i < CONCURRENT_FRAMES_MAX; ++i) {
+        			render_proc_destroy_sync(device, &rprocs[i]);
+        			render_proc_create_sync(device, &rprocs[i]);
+			}
 
-                                VkFenceCreateInfo fence_info = {0};
-                                fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-                                fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-                                vkCreateFence(device, &fence_info, NULL, &render_done_fences[i]);
-
-                                VkSemaphoreCreateInfo sem_info = {0};
-                                sem_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-                                vkCreateSemaphore(device, &sem_info, NULL, &image_avail_sems[i]);
-                                vkCreateSemaphore(device, &sem_info, NULL, &render_done_sems[i]);
-                        }
                         for (int i = 0; i < swapchain.image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
 
                         int real_width, real_height;
@@ -467,23 +452,20 @@ int main() {
                         if (real_width != swapchain.width || real_height != swapchain.height) must_recreate = 1;
                 }
 
-                int sync_idx = frame_ct % CBUF_CT;
+                int rproc_idx = frame_ct % rproc_ct;
+                struct RenderProc* const rproc = &rprocs[rproc_idx];
 
-                VkFence render_done_fence = render_done_fences[sync_idx];
-                VkSemaphore image_avail_sem = image_avail_sems[sync_idx];
-                VkSemaphore render_done_sem = render_done_sems[sync_idx];
-
-                // Wait for the frame using these sync objects to finish rendering
-                res = vkWaitForFences(device, 1, &render_done_fence, VK_TRUE, UINT64_MAX);
+                // Wait for the render process using these sync objects to finish rendering
+                res = vkWaitForFences(device, 1, &rproc->fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
                 // Reset command buffer
-                VkCommandBuffer cbuf = cbufs[sync_idx];
-                vkResetCommandBuffer(cbuf, 0);
+                vkResetCommandBuffer(rproc->cbuf, 0);
 
                 // Acquire an image
                 uint32_t image_idx;
-                res = vkAcquireNextImageKHR(device, swapchain.handle, UINT64_MAX, image_avail_sem, VK_NULL_HANDLE, &image_idx);
+                res = vkAcquireNextImageKHR(device, swapchain.handle, UINT64_MAX,
+                                            rproc->acquire_sem, VK_NULL_HANDLE, &image_idx);
                 if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                         must_recreate = 1;
                         continue;
@@ -493,7 +475,7 @@ int main() {
                 VkCommandBufferBeginInfo cbuf_begin_info = {0};
                 cbuf_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 cbuf_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-                vkBeginCommandBuffer(cbuf, &cbuf_begin_info);
+                vkBeginCommandBuffer(rproc->cbuf, &cbuf_begin_info);
 
                 VkClearValue clear_color = {{{0.0F, 0.0F, 0.0F, 1.0F}}};
 
@@ -505,26 +487,29 @@ int main() {
                 cbuf_rpass_info.renderArea.extent.height = swapchain.height;
                 cbuf_rpass_info.clearValueCount = 1;
                 cbuf_rpass_info.pClearValues = &clear_color;
-                vkCmdBeginRenderPass(cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
+                vkCmdBeginRenderPass(rproc->cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                vkCmdBindPipeline(rproc->cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+                VkDeviceSize vbuf_offset = 0;
+                vkCmdBindVertexBuffers(rproc->cbuf, 0, 1, &vbuf.handle, &vbuf_offset);
 
                 VkViewport viewport = {0};
                 viewport.width = swapchain.width;
                 viewport.height = swapchain.height;
                 viewport.minDepth = 0.0F;
                 viewport.maxDepth = 1.0F;
-                vkCmdSetViewport(cbuf, 0, 1, &viewport);
+                vkCmdSetViewport(rproc->cbuf, 0, 1, &viewport);
 
                 VkRect2D scissor = {0};
                 scissor.extent.width = swapchain.width;
                 scissor.extent.height = swapchain.height;
-                vkCmdSetScissor(cbuf, 0, 1, &scissor);
+                vkCmdSetScissor(rproc->cbuf, 0, 1, &scissor);
 
-                vkCmdDraw(cbuf, 3, 1, 0, 0);
-                vkCmdEndRenderPass(cbuf);
+                vkCmdDraw(rproc->cbuf, 3, 1, 0, 0);
+                vkCmdEndRenderPass(rproc->cbuf);
 
-                res = vkEndCommandBuffer(cbuf);
+                res = vkEndCommandBuffer(rproc->cbuf);
                 assert(res == VK_SUCCESS);
 
                 // Wait until whoever is rendering to the image is done
@@ -532,32 +517,32 @@ int main() {
                         vkWaitForFences(device, 1, &image_fences[image_idx], VK_TRUE, UINT64_MAX);
 
                 // Reset fence
-                res = vkResetFences(device, 1, &render_done_fence);
+                res = vkResetFences(device, 1, &rproc->fence);
                 assert(res == VK_SUCCESS);
 
                 // Mark it as in use by us
-                image_fences[image_idx] = render_done_fence;
+                image_fences[image_idx] = rproc->fence;
 
                 // Submit
                 VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
                 VkSubmitInfo submit_info = {0};
                 submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
                 submit_info.waitSemaphoreCount = 1;
-                submit_info.pWaitSemaphores = &image_avail_sem;
+                submit_info.pWaitSemaphores = &rproc->acquire_sem;
                 submit_info.pWaitDstStageMask = &wait_stage;
                 submit_info.commandBufferCount = 1;
-                submit_info.pCommandBuffers = &cbuf;
+                submit_info.pCommandBuffers = &rproc->cbuf;
                 submit_info.signalSemaphoreCount = 1;
-                submit_info.pSignalSemaphores = &render_done_sem;
+                submit_info.pSignalSemaphores = &rproc->render_sem;
 
-                res = vkQueueSubmit(queue, 1, &submit_info, render_done_fence);
+                res = vkQueueSubmit(queue, 1, &submit_info, rproc->fence);
                 assert(res == VK_SUCCESS);
 
                 // Present
                 VkPresentInfoKHR present_info = {0};
                 present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
                 present_info.waitSemaphoreCount = 1;
-                present_info.pWaitSemaphores = &render_done_sem;
+                present_info.pWaitSemaphores = &rproc->render_sem;
                 present_info.swapchainCount = 1;
                 present_info.pSwapchains = &swapchain.handle;
                 present_info.pImageIndices = &image_idx;
@@ -580,11 +565,7 @@ int main() {
         // Cleanup
         vkDeviceWaitIdle(device);
 
-        for (int i = 0; i < CBUF_CT; ++i) {
-                vkDestroyFence(device, render_done_fences[i], NULL);
-                vkDestroySemaphore(device, image_avail_sems[i], NULL);
-                vkDestroySemaphore(device, render_done_sems[i], NULL);
-        }
+	for (int i = 0; i < rproc_ct; ++i) render_proc_destroy_sync(device, &rprocs[i]);
 
         vkDestroyPipeline(device, pipeline, NULL);
 
@@ -599,10 +580,11 @@ int main() {
         fbs_destroy(device, swapchain.image_ct, fbs);
         swapchain_destroy(device, &swapchain);
 
+        buffer_destroy(device, &vbuf);
+
         vkDestroyDevice(device, NULL);
 
-        PFN_vkDestroyDebugUtilsMessengerEXT debug_destroy_fun =
-                (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+        PFN_vkDestroyDebugUtilsMessengerEXT debug_destroy_fun = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
         assert(debug_destroy_fun != NULL);
         debug_destroy_fun(instance, debug_msgr, NULL);
 
