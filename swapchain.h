@@ -18,9 +18,10 @@ struct Swapchain {
         VkImageView* views;
 };
 
+// old_sc should be valid or VK_NULL_HANDLE.
 void swapchain_create(VkSurfaceKHR surface, VkPhysicalDevice phys_dev, VkDevice device,
                       VkFormat format_pref, VkPresentModeKHR present_mode_pref,
-                      struct Swapchain* sc)
+                      VkSwapchainKHR old_sc, struct Swapchain* sc)
 {
 	// Choose settings
 	VkSurfaceCapabilitiesKHR surface_caps;
@@ -70,6 +71,7 @@ void swapchain_create(VkSurfaceKHR surface, VkPhysicalDevice phys_dev, VkDevice 
 	sc_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 	sc_info.presentMode = sc->present_mode;
 	sc_info.clipped = VK_TRUE;
+	sc_info.oldSwapchain = old_sc;
 
 	VkResult res = vkCreateSwapchainKHR(device, &sc_info, NULL, &sc->handle);
 	assert(res == VK_SUCCESS);
@@ -102,12 +104,11 @@ void swapchain_create(VkSurfaceKHR surface, VkPhysicalDevice phys_dev, VkDevice 
         	res = vkCreateImageView(device, &view_info, NULL, &sc->views[i]);
         	assert(res == VK_SUCCESS);
 	}
-
 }
 
-void swapchain_destroy(VkDevice device, struct Swapchain* sc) {
+// Destroys images and views. Handle is still valid and can be used as .oldSwapchain.
+void swapchain_clear(VkDevice device, struct Swapchain* sc) {
 	for (int i = 0; i < sc->image_ct; ++i) vkDestroyImageView(device, sc->views[i], NULL);
-	vkDestroySwapchainKHR(device, sc->handle, NULL);
 
 	free(sc->images);
 	free(sc->views);

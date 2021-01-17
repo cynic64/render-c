@@ -16,11 +16,11 @@ const char* VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
 const int INSTANCE_EXT_CT = 1;
 const char* INSTANCE_EXTS[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
 
-const int DEVICE_EXT_CT = 1;
 const char* DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
+const int DEVICE_EXT_CT = 1;
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
-const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
+const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_FIFO_KHR;
 
 const int CBUF_CT = 4;
 
@@ -56,6 +56,30 @@ VkShaderModule load_shader(VkDevice device, const char* path) {
         free(buf);
 
 	return shader;
+}
+
+// Memory must be preallocated
+void fbs_create(VkDevice device, VkRenderPass rpass, uint32_t width, uint32_t height,
+                uint32_t view_ct, VkImageView* views, VkFramebuffer* fbs)
+{
+	for (int i = 0; i < view_ct; ++i) {
+    		VkFramebufferCreateInfo info = {0};
+    		info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    		info.renderPass = rpass;
+    		info.attachmentCount = 1;
+    		info.pAttachments = &views[i];
+    		info.width = width;
+    		info.height = height;
+    		info.layers = 1;
+
+    		VkResult res = vkCreateFramebuffer(device, &info, NULL, &fbs[i]);
+    		assert(res == VK_SUCCESS);
+	}
+}
+
+// Does not free fbs
+void fbs_destroy(VkDevice device, uint32_t fb_ct, VkFramebuffer* fbs) {
+        for (int i = 0; i < fb_ct; ++i) vkDestroyFramebuffer(device, fbs[i], NULL);
 }
 
 int main() {
@@ -211,11 +235,12 @@ int main() {
 
 	// Create queue
 	VkQueue queue;
-	vkGetDeviceQueue(device, queue_fam, 0, &queue);
 
 	// Swapchain, framebuffers, image fences
+	vkGetDeviceQueue(device, queue_fam, 0, &queue);
 	struct Swapchain swapchain;
-	swapchain_create(surface, phys_dev, device, VK_FORMAT_B8G8R8A8_SRGB, VK_PRESENT_MODE_IMMEDIATE_KHR, &swapchain);
+	swapchain_create(surface, phys_dev, device, VK_FORMAT_B8G8R8A8_SRGB, VK_PRESENT_MODE_FIFO_KHR,
+		         VK_NULL_HANDLE, &swapchain);
 
 	// Get images
 	uint32_t image_ct = 0; // Not necessarily what we chose
@@ -354,19 +379,7 @@ int main() {
 
 	// Framebuffers
 	VkFramebuffer* fbs = malloc(image_ct * sizeof(fbs[0]));
-	for (int i = 0; i < image_ct; ++i) {
-    		VkFramebufferCreateInfo fb_info = {0};
-    		fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    		fb_info.renderPass = rpass;
-    		fb_info.attachmentCount = 1;
-    		fb_info.pAttachments = &swapchain.views[i];
-    		fb_info.width = swapchain.width;
-    		fb_info.height = swapchain.height;
-    		fb_info.layers = 1;
-
-    		res = vkCreateFramebuffer(device, &fb_info, NULL, &fbs[i]);
-    		assert(res == VK_SUCCESS);
-	}
+	fbs_create(device, rpass, swapchain.width, swapchain.height, swapchain.image_ct, swapchain.views, fbs);
 
 	// Command pool
 	VkCommandPoolCreateInfo cpool_info = {0};
@@ -405,6 +418,7 @@ int main() {
 		vkCreateSemaphore(device, &sem_info, NULL, &image_avail_sems[i]);
 		vkCreateSemaphore(device, &sem_info, NULL, &render_done_sems[i]);
 	}
+
 	VkFence* image_fences = malloc(image_ct * sizeof(image_fences[0]));
 	for (int i = 0; i < image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
 
@@ -415,6 +429,45 @@ int main() {
 
 	int must_recreate = 0;
         while (!glfwWindowShouldClose(window)) {
+                printf("a\n");
+                if (must_recreate) {
+                        printf("ab\n");
+                        vkDeviceWaitIdle(device);
+
+                        VkFormat old_format = swapchain.format;
+                        uint32_t old_image_ct = swapchain.image_ct;
+
+			fbs_destroy(device, swapchain.image_ct, fbs);
+                        printf("ac\n");
+
+		new_swap:
+                        swapchain_clear(device, &swapchain);
+			swapchain_create(surface, phys_dev, device,
+                                         VK_FORMAT_B8G8R8A8_SRGB, VK_PRESENT_MODE_FIFO_KHR,
+				         swapchain.handle, &swapchain);
+
+                        printf("ad\n");
+			assert(swapchain.format == old_format && swapchain.image_ct == old_image_ct);
+
+			uint32_t real_width, real_height;
+			printf("pre-get\n");
+			/*
+			glfwGetFramebufferSize(window, &real_width, &real_height);
+			printf("post-get\n");
+			if (swapchain.width != real_width || swapchain.height != real_height) {
+        			printf("Goto\n");
+        			goto new_swap;
+			}
+			printf("ae\n");
+			*/
+
+			fbs_create(device, rpass, swapchain.width, swapchain.height,
+                                   swapchain.image_ct, swapchain.views, fbs);
+
+			must_recreate = 0;
+                }
+                printf("b\n");
+
                 int sync_idx = frame_ct % CBUF_CT;
 
                 VkFence render_done_fence = render_done_fences[sync_idx];
@@ -431,7 +484,13 @@ int main() {
 
                 // Acquire an image
                 uint32_t image_idx;
-                vkAcquireNextImageKHR(device, swapchain.handle, UINT64_MAX, image_avail_sem, VK_NULL_HANDLE, &image_idx);
+                res = vkAcquireNextImageKHR(device, swapchain.handle, UINT64_MAX, image_avail_sem, VK_NULL_HANDLE, &image_idx);
+                if (res == VK_ERROR_OUT_OF_DATE_KHR) {
+                        must_recreate = 1;
+                        printf("here\n");
+                        continue;
+                } else assert(res == VK_SUCCESS);
+                printf("c\n");
 
                 // Record command buffer
                 VkCommandBufferBeginInfo cbuf_begin_info = {0};
@@ -507,7 +566,8 @@ int main() {
 		present_info.pImageIndices = &image_idx;
 
 		res = vkQueuePresentKHR(queue, &present_info);
-		assert(res == VK_SUCCESS);
+		if (res == VK_ERROR_OUT_OF_DATE_KHR) must_recreate = 1;
+		else assert(res == VK_SUCCESS);
 
                 glfwPollEvents();
                 ++frame_ct;
@@ -539,13 +599,9 @@ int main() {
 	vkDestroyShaderModule(device, vs, NULL);
 	vkDestroyShaderModule(device, fs, NULL);
 
-	for (int i = 0; i < image_ct; ++i) {
-        	rpass_info.dependencyCount = 1;
-        	rpass_info.pDependencies = &subpass_dep;
-        	vkDestroyFramebuffer(device, fbs[i], NULL);
-	}
-
-	swapchain_destroy(device, &swapchain);
+	fbs_destroy(device, swapchain.image_ct, fbs);
+	swapchain_clear(device, &swapchain);
+	vkDestroySwapchainKHR(device, swapchain.handle, NULL);
 
 	vkDestroyDevice(device, NULL);
 
