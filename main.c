@@ -223,26 +223,6 @@ int main() {
 	VkImage* images = malloc(image_ct * sizeof(images[0]));
 	vkGetSwapchainImagesKHR(device, swapchain.handle, &image_ct, images);
 
-	VkImageView* image_views = malloc(image_ct * sizeof(image_views[0]));
-	for (int i = 0; i < image_ct; ++i) {
-        	VkImageViewCreateInfo view_info = {0};
-        	view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-        	view_info.image = images[i];
-        	view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-        	view_info.format = swapchain.format;
-        	view_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-        	view_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-        	view_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-        	view_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-        	view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        	view_info.subresourceRange.baseMipLevel = 0;
-        	view_info.subresourceRange.levelCount = 1;
-        	view_info.subresourceRange.baseArrayLayer = 0;
-        	view_info.subresourceRange.layerCount = 1;
-        	res = vkCreateImageView(device, &view_info, NULL, &image_views[i]);
-        	assert(res == VK_SUCCESS);
-	}
-
 	// Load shaders
 	VkShaderModule vs = load_shader(device, "shader.vs.spv");
 	VkShaderModule fs = load_shader(device, "shader.fs.spv");
@@ -375,13 +355,11 @@ int main() {
 	// Framebuffers
 	VkFramebuffer* fbs = malloc(image_ct * sizeof(fbs[0]));
 	for (int i = 0; i < image_ct; ++i) {
-    		VkImageView attachments[] = {image_views[i]};
-
     		VkFramebufferCreateInfo fb_info = {0};
     		fb_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     		fb_info.renderPass = rpass;
     		fb_info.attachmentCount = 1;
-    		fb_info.pAttachments = attachments;
+    		fb_info.pAttachments = &swapchain.views[i];
     		fb_info.width = swapchain.width;
     		fb_info.height = swapchain.height;
     		fb_info.layers = 1;
@@ -434,6 +412,8 @@ int main() {
 	int frame_ct = 0;
 	struct timespec start_time;
 	clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
+
+	int must_recreate = 0;
         while (!glfwWindowShouldClose(window)) {
                 int sync_idx = frame_ct % CBUF_CT;
 
@@ -562,11 +542,10 @@ int main() {
 	for (int i = 0; i < image_ct; ++i) {
         	rpass_info.dependencyCount = 1;
         	rpass_info.pDependencies = &subpass_dep;
-        	vkDestroyImageView(device, image_views[i], NULL);
         	vkDestroyFramebuffer(device, fbs[i], NULL);
 	}
 
-	vkDestroySwapchainKHR(device, swapchain.handle, NULL);
+	swapchain_destroy(device, &swapchain);
 
 	vkDestroyDevice(device, NULL);
 
