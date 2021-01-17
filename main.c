@@ -371,7 +371,7 @@ int main() {
         assert(res == VK_SUCCESS);
 
         // Framebuffers
-        VkFramebuffer* fbs = malloc(image_ct * sizeof(fbs[0]));
+        VkFramebuffer* fbs = malloc(swapchain.image_ct * sizeof(fbs[0]));
         fbs_create(device, rpass, swapchain.width, swapchain.height, swapchain.image_ct, swapchain.views, fbs);
 
         // Command pool
@@ -412,8 +412,8 @@ int main() {
                 vkCreateSemaphore(device, &sem_info, NULL, &render_done_sems[i]);
         }
 
-        VkFence* image_fences = malloc(image_ct * sizeof(image_fences[0]));
-        for (int i = 0; i < image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
+        VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
+        for (int i = 0; i < swapchain.image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
 
         // Main loop
         int frame_ct = 0;
@@ -431,11 +431,9 @@ int main() {
 
                         fbs_destroy(device, swapchain.image_ct, fbs);
 
-                        swapchain_clear(device, &swapchain);
-                        vkDestroySwapchainKHR(device, swapchain.handle, NULL);
+                        swapchain_destroy(device, &swapchain);
                         swapchain_create(surface, phys_dev, device,
-                                         VK_FORMAT_B8G8R8A8_SRGB, VK_PRESENT_MODE_IMMEDIATE_KHR,
-                                         VK_NULL_HANDLE, &swapchain);
+                                         SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
                         assert(swapchain.format == old_format && swapchain.image_ct == old_image_ct);
 
@@ -594,8 +592,7 @@ int main() {
         vkDestroyShaderModule(device, fs, NULL);
 
         fbs_destroy(device, swapchain.image_ct, fbs);
-        swapchain_clear(device, &swapchain);
-        vkDestroySwapchainKHR(device, swapchain.handle, NULL);
+        swapchain_destroy(device, &swapchain);
 
         vkDestroyDevice(device, NULL);
 

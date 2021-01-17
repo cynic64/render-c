@@ -106,7 +106,7 @@ void swapchain_create(VkSurfaceKHR surface, VkPhysicalDevice phys_dev, VkDevice 
 
 void swapchain_destroy(VkDevice device, struct Swapchain* sc) {
         for (int i = 0; i < sc->image_ct; ++i) vkDestroyImageView(device, sc->views[i], NULL);
-        vkDestroySwapchainKHR(device, swapchain->handle, NULL);
+        vkDestroySwapchainKHR(device, sc->handle, NULL);
 
         free(sc->images);
         free(sc->views);
