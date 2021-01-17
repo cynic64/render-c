@@ -2,7 +2,7 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#include "swapchain.h"
+#include "../src/ll/swapchain.h"
 
 #include <stdio.h>
 #include <assert.h>
@@ -38,6 +38,8 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFla
 
 VkShaderModule load_shader(VkDevice device, const char* path) {
         FILE *fp = fopen(path, "r");
+        assert(fp != NULL);
+
         fseek(fp, 0L, SEEK_END);
         const int byte_ct = ftell(fp);
         rewind(fp);
@@ -245,8 +247,8 @@ int main() {
         swapchain_create(surface, phys_dev, device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
         // Load shaders
-        VkShaderModule vs = load_shader(device, "shader.vs.spv");
-        VkShaderModule fs = load_shader(device, "shader.fs.spv");
+        VkShaderModule vs = load_shader(device, "shaders/shader.vs.spv");
+        VkShaderModule fs = load_shader(device, "shaders/shader.fs.spv");
 
         VkPipelineShaderStageCreateInfo shaders[2] = {0};
         shaders[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -493,7 +495,7 @@ int main() {
                 cbuf_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 vkBeginCommandBuffer(cbuf, &cbuf_begin_info);
 
-                VkClearValue clear_color = {{0.0F, 0.0F, 0.0F, 1.0F}};
+                VkClearValue clear_color = {{{0.0F, 0.0F, 0.0F, 1.0F}}};
 
                 VkRenderPassBeginInfo cbuf_rpass_info = {0};
                 cbuf_rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
