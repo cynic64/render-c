@@ -3,11 +3,12 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#include "../src/ll/buffer.h"
-#include "../src/ll/render_proc.h"
-#include "../src/ll/shader.h"
-#include "../src/ll/swapchain.h"
-#include "../src/ll/sync.h"
+#include "src/ll/base.h"
+#include "src/ll/buffer.h"
+#include "src/ll/render_proc.h"
+#include "src/ll/shader.h"
+#include "src/ll/swapchain.h"
+#include "src/ll/sync.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -15,9 +16,6 @@
 #include <string.h>
 #include <time.h>
 #include <math.h>
-
-const int VALIDATION_LAYER_CT = 1;
-const char* VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
 
 const int INSTANCE_EXT_CT = 1;
 const char* INSTANCE_EXTS[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
@@ -29,6 +27,12 @@ const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 
 const int CONCURRENT_FRAMES_MAX = 4;
+
+#ifndef NDEBUG
+        const int VALIDATION_ON = 1;
+#else
+	const int VALIDATION_ON = 0;
+#endif
 
 struct Vertex {
         vec2 pos;
@@ -48,18 +52,6 @@ struct Uniform {
         mat4 view;
         mat4 proj;
 };
-
-static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-                                                  VkDebugUtilsMessageTypeFlagsEXT type,
-                                                  const VkDebugUtilsMessengerCallbackDataEXT* cback_data,
-                                                  void* user_data)
-{
-        (void)(severity);
-        (void)(type);
-        (void)(user_data);
-        fprintf(stderr, "%s\n", cback_data->pMessage);
-        return VK_FALSE;
-}
 
 // Memory must be preallocated
 void fbs_create(VkDevice device, VkRenderPass rpass, uint32_t width, uint32_t height,
@@ -91,174 +83,30 @@ int main() {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan", NULL, NULL);
 
-        // Combine GLFW extensions with whatever we want
-        uint32_t glfw_ext_ct = 0;
-        const char** glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_ext_ct);
-
-        uint32_t instance_ext_ct = glfw_ext_ct + INSTANCE_EXT_CT;
-        const char** instance_exts = malloc(instance_ext_ct * sizeof(instance_exts[0]));
-        for (int i = 0; i < instance_ext_ct; ++i) {
-                if (i < glfw_ext_ct) instance_exts[i] = glfw_exts[i];
-                else instance_exts[i] = INSTANCE_EXTS[i-glfw_ext_ct];
-        }
-
-        // Query extensions
-        uint32_t avail_instance_ext_ct = 0;
-        vkEnumerateInstanceExtensionProperties(NULL, &avail_instance_ext_ct, NULL);
-        VkExtensionProperties* avail_instance_exts = malloc(avail_instance_ext_ct * sizeof(avail_instance_exts[0]));
-        vkEnumerateInstanceExtensionProperties(NULL, &avail_instance_ext_ct, avail_instance_exts);
-        for (int i = 0; i < instance_ext_ct; ++i) {
-                const char* ext_want = instance_exts[i];
-                int found = 0;
-                for (int j = 0; j < avail_instance_ext_ct; ++j) {
-                        if (strcmp(avail_instance_exts[j].extensionName, ext_want) == 0) found = 1;
-                }
-                assert(found);
-        }
-
-        // Query validation layers
-        uint32_t layer_ct;
-        vkEnumerateInstanceLayerProperties(&layer_ct, NULL);
-        VkLayerProperties* layers = malloc(layer_ct * sizeof(layers[0]));
-        vkEnumerateInstanceLayerProperties(&layer_ct, layers);
-
-        for (int i = 0; i < VALIDATION_LAYER_CT; ++i) {
-                const char* want_layer = VALIDATION_LAYERS[i];
-                int found = 0;
-                for (int j = 0; j < layer_ct && !found; ++j) {
-                        if (strcmp(layers[j].layerName, want_layer) == 0) found = 1;
-                }
-                assert(found);
-        }
-
-        // Fill in debug messenger info
-        VkDebugUtilsMessengerCreateInfoEXT debug_info = {0};
-        debug_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-        // VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT excluded
-        debug_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        debug_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-        debug_info.pfnUserCallback = debug_cback;
-
-        // Instance
-        VkApplicationInfo app_info = {0};
-        app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-        app_info.pApplicationName = "Thing";
-        app_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-        app_info.pEngineName = "No Engine";
-        app_info.apiVersion = VK_API_VERSION_1_0;
-
-        VkInstanceCreateInfo instance_info = {0};
-        instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-        instance_info.pApplicationInfo = &app_info;
-        instance_info.pNext = (VkDebugUtilsMessengerCreateInfoEXT*) &debug_info;
-
-        instance_info.enabledLayerCount = VALIDATION_LAYER_CT;
-        instance_info.ppEnabledLayerNames = VALIDATION_LAYERS;
-
-        instance_info.enabledExtensionCount = instance_ext_ct;
-        instance_info.ppEnabledExtensionNames = instance_exts;
-
-        VkInstance instance;
-        VkResult res = vkCreateInstance(&instance_info, NULL, &instance);
-        assert(res == VK_SUCCESS);
-
-        // Surface
-        VkSurfaceKHR surface;
-        res = glfwCreateWindowSurface(instance, window, NULL, &surface);
-        assert(res == VK_SUCCESS);
-
-        // Create debug messenger
-        VkDebugUtilsMessengerEXT debug_msgr;
-        PFN_vkCreateDebugUtilsMessengerEXT debug_create_fun = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-        assert(debug_create_fun != NULL);
-        debug_create_fun(instance, &debug_info, NULL, &debug_msgr);
-
-        // Physical device
-        uint32_t phys_dev_ct = 0;
-        vkEnumeratePhysicalDevices(instance, &phys_dev_ct, NULL);
-        VkPhysicalDevice* phys_devs = malloc(phys_dev_ct * sizeof(phys_devs[0]));
-        vkEnumeratePhysicalDevices(instance, &phys_dev_ct, phys_devs);
-        VkPhysicalDevice phys_dev = phys_devs[0];
-
-        VkPhysicalDeviceProperties phys_dev_props;
-        vkGetPhysicalDeviceProperties(phys_dev, &phys_dev_props);
-        printf("Using device: %s\n", phys_dev_props.deviceName);
-
-        // Queue families
-        uint32_t queue_fam_ct = 0;
-        vkGetPhysicalDeviceQueueFamilyProperties(phys_dev, &queue_fam_ct, NULL);
-        VkQueueFamilyProperties* queue_fam_props = malloc(queue_fam_ct * sizeof(queue_fam_props[0]));
-        vkGetPhysicalDeviceQueueFamilyProperties(phys_dev, &queue_fam_ct, queue_fam_props);
-        uint32_t queue_fam = UINT32_MAX;
-        for (int i = 0; i < queue_fam_ct && queue_fam == UINT32_MAX; ++i) {
-                int graphics_ok = queue_fam_props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT;
-                VkBool32 present_ok = VK_FALSE;
-                vkGetPhysicalDeviceSurfaceSupportKHR(phys_dev, i, surface, &present_ok);
-                if (graphics_ok && present_ok) queue_fam = i;
-        }
-        assert(queue_fam != UINT32_MAX);
-
-        // Query device extensions
-        uint32_t dev_ext_ct = 0;
-        vkEnumerateDeviceExtensionProperties(phys_dev, NULL, &dev_ext_ct, NULL);
-        VkExtensionProperties* dev_exts = malloc(dev_ext_ct * sizeof(dev_exts[0]));
-        vkEnumerateDeviceExtensionProperties(phys_dev, NULL, &dev_ext_ct, dev_exts);
-        for (int i = 0; i < DEVICE_EXT_CT; ++i) {
-                const char * want_ext = DEVICE_EXTS[i];
-                int found = 0;
-                for (int j = 0; j < dev_ext_ct && !found; ++j) {
-                        if (strcmp(dev_exts[j].extensionName, want_ext) == 0) found = 1;
-                }
-                assert(found);
-        }
-
-        // Create logical device
-        const float queue_priority = 1.0F;
-        VkDeviceQueueCreateInfo dev_queue_info = {0};
-        dev_queue_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-        dev_queue_info.queueFamilyIndex = queue_fam;
-        dev_queue_info.queueCount = 1;
-        dev_queue_info.pQueuePriorities = &queue_priority;
-
-        VkPhysicalDeviceFeatures dev_features = {0};
-
-        VkDeviceCreateInfo device_info = {0};
-        device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-        device_info.pQueueCreateInfos = &dev_queue_info;
-        device_info.queueCreateInfoCount = 1;
-        device_info.pEnabledFeatures = &dev_features;
-        device_info.enabledLayerCount = 0;
-        device_info.enabledExtensionCount = DEVICE_EXT_CT;
-        device_info.ppEnabledExtensionNames = DEVICE_EXTS;
-
-        VkDevice device;
-        res = vkCreateDevice(phys_dev, &device_info, NULL, &device);
-        assert(res == VK_SUCCESS);
-
-        // Create queue
-        VkQueue queue;
-        vkGetDeviceQueue(device, queue_fam, 0, &queue);
+        // Base
+        struct Base base;
+        base_create(window, VALIDATION_ON, INSTANCE_EXT_CT, INSTANCE_EXTS, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
         // Command pool
         VkCommandPoolCreateInfo cpool_info = {0};
         cpool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         cpool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        cpool_info.queueFamilyIndex = queue_fam;
+        cpool_info.queueFamilyIndex = base.queue_fam;
 
         VkCommandPool cpool;
-        res = vkCreateCommandPool(device, &cpool_info, NULL, &cpool);
+        VkResult res = vkCreateCommandPool(base.device, &cpool_info, NULL, &cpool);
         assert(res == VK_SUCCESS);
 
         // Meshes
         struct Buffer vbuf, ibuf;
-        buffer_staged(phys_dev, device, queue, cpool, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        buffer_staged(base.phys_dev, base.device, base.queue, cpool, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(VERTICES), VERTICES, &vbuf);
-        buffer_staged(phys_dev, device, queue, cpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        buffer_staged(base.phys_dev, base.device, base.queue, cpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(INDICES), INDICES, &ibuf);
 
         // Swapchain
         struct Swapchain swapchain;
-        swapchain_create(surface, phys_dev, device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
+        swapchain_create(base.surface, base.phys_dev, base.device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
         // Vertex input
         VkVertexInputBindingDescription vtx_bind_desc = {0};
@@ -277,8 +125,8 @@ int main() {
         vtx_attr_descs[1].offset = offsetof(struct Vertex, color);
 
         // Load shaders
-        VkShaderModule vs = load_shader(device, "shaders/uniform/shader.vs.spv");
-        VkShaderModule fs = load_shader(device, "shaders/uniform/shader.fs.spv");
+        VkShaderModule vs = load_shader(base.device, "shaders/shader.vs.spv");
+        VkShaderModule fs = load_shader(base.device, "shaders/shader.fs.spv");
 
         VkPipelineShaderStageCreateInfo shaders[2] = {0};
         shaders[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -328,7 +176,7 @@ int main() {
         rpass_info.pDependencies = &subpass_dep;
 
         VkRenderPass rpass;
-        res = vkCreateRenderPass(device, &rpass_info, NULL, &rpass);
+        res = vkCreateRenderPass(base.device, &rpass_info, NULL, &rpass);
         assert(res == VK_SUCCESS);
 
         // Descriptor set layout
@@ -344,7 +192,7 @@ int main() {
         desc_lt_info.pBindings = &desc_lt_bind;
 
         VkDescriptorSetLayout desc_lt = {0};
-        res = vkCreateDescriptorSetLayout(device, &desc_lt_info, NULL, &desc_lt);
+        res = vkCreateDescriptorSetLayout(base.device, &desc_lt_info, NULL, &desc_lt);
         assert(res == VK_SUCCESS);
 
         // Pipeline layout
@@ -354,7 +202,7 @@ int main() {
         pipeline_lt_info.pSetLayouts = &desc_lt;
 
         VkPipelineLayout pipeline_lt;
-        res = vkCreatePipelineLayout(device, &pipeline_lt_info, NULL, &pipeline_lt);
+        res = vkCreatePipelineLayout(base.device, &pipeline_lt_info, NULL, &pipeline_lt);
         assert(res == VK_SUCCESS);
 
         // Pipeline
@@ -424,22 +272,22 @@ int main() {
         pipeline_info.subpass = 0;
 
         VkPipeline pipeline;
-        res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &pipeline);
+        res = vkCreateGraphicsPipelines(base.device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &pipeline);
         assert(res == VK_SUCCESS);
 
         // Framebuffers
         VkFramebuffer* fbs = malloc(swapchain.image_ct * sizeof(fbs[0]));
-        fbs_create(device, rpass, swapchain.width, swapchain.height, swapchain.image_ct, swapchain.views, fbs);
+        fbs_create(base.device, rpass, swapchain.width, swapchain.height, swapchain.image_ct, swapchain.views, fbs);
 
         // Render processes
         uint32_t rproc_ct = CONCURRENT_FRAMES_MAX;
         struct RenderProc* rprocs = malloc(rproc_ct * sizeof(rprocs[0]));
-        for (int i = 0; i < rproc_ct; ++i) render_proc_create(device, cpool, &rprocs[i]);
+        for (int i = 0; i < rproc_ct; ++i) render_proc_create(base.device, cpool, &rprocs[i]);
 
         // Uniform buffers (one for every render process)
         struct Buffer* ubufs = malloc(rproc_ct * sizeof(ubufs[0]));
         for (int i = 0; i < rproc_ct; ++i) {
-                buffer_create(phys_dev, device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+                buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                               sizeof(struct Uniform), &ubufs[i]);
         };
@@ -456,7 +304,7 @@ int main() {
         dpool_info.maxSets = rproc_ct;
 
         VkDescriptorPool dpool;
-        res = vkCreateDescriptorPool(device, &dpool_info, NULL, &dpool);
+        res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
         assert(res == VK_SUCCESS);
 
         // Descriptor sets
@@ -470,7 +318,7 @@ int main() {
         set_info.pSetLayouts = set_layouts;
 
         VkDescriptorSet* sets = malloc(rproc_ct * sizeof(sets[0]));
-        res = vkAllocateDescriptorSets(device, &set_info, sets);
+        res = vkAllocateDescriptorSets(base.device, &set_info, sets);
         assert(res == VK_SUCCESS);
 
         free(set_layouts);
@@ -489,10 +337,10 @@ int main() {
                 desc_write.descriptorCount = 1;
                 desc_write.pBufferInfo = &desc_buf;
 
-                vkUpdateDescriptorSets(device, 1, &desc_write, 0, NULL);
+                vkUpdateDescriptorSets(base.device, 1, &desc_write, 0, NULL);
         }
 
-        vkDestroyDescriptorSetLayout(device, desc_lt, NULL);
+        vkDestroyDescriptorSetLayout(base.device, desc_lt, NULL);
 
         // Image fences
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
@@ -507,25 +355,25 @@ int main() {
         while (!glfwWindowShouldClose(window)) {
                 while (must_recreate) {
                         must_recreate = 0;
-                        vkDeviceWaitIdle(device);
+                        vkDeviceWaitIdle(base.device);
 
                         VkFormat old_format = swapchain.format;
                         uint32_t old_image_ct = swapchain.image_ct;
 
-                        fbs_destroy(device, swapchain.image_ct, fbs);
+                        fbs_destroy(base.device, swapchain.image_ct, fbs);
 
-                        swapchain_destroy(device, &swapchain);
-                        swapchain_create(surface, phys_dev, device,
+                        swapchain_destroy(base.device, &swapchain);
+                        swapchain_create(base.surface, base.phys_dev, base.device,
                                          SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
                         assert(swapchain.format == old_format && swapchain.image_ct == old_image_ct);
 
-                        fbs_create(device, rpass, swapchain.width, swapchain.height,
+                        fbs_create(base.device, rpass, swapchain.width, swapchain.height,
                                    swapchain.image_ct, swapchain.views, fbs);
 
                         for (int i = 0; i < CONCURRENT_FRAMES_MAX; ++i) {
-                                render_proc_destroy_sync(device, &rprocs[i]);
-                                render_proc_create_sync(device, &rprocs[i]);
+                                render_proc_destroy_sync(base.device, &rprocs[i]);
+                                render_proc_create_sync(base.device, &rprocs[i]);
                         }
 
                         for (int i = 0; i < swapchain.image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
@@ -550,10 +398,10 @@ int main() {
                 glm_lookat(eye, (vec3){0.0F, 0.0F, 0.0F}, (vec3){0.0F, -1.0F, 0.0F}, uni_data.view);
                 glm_perspective(1.0F, 1.0F, 0.1F, 10.0F, uni_data.proj);
                 struct Buffer* ubuf = &ubufs[rproc_idx];
-                buffer_mem_write(device, ubuf->mem, sizeof(uni_data), &uni_data);
+                buffer_mem_write(base.device, ubuf->mem, sizeof(uni_data), &uni_data);
 
                 // Wait for the render process using these sync objects to finish rendering
-                res = vkWaitForFences(device, 1, &rproc->fence, VK_TRUE, UINT64_MAX);
+                res = vkWaitForFences(base.device, 1, &rproc->fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
                 // Reset command buffer
@@ -561,7 +409,7 @@ int main() {
 
                 // Acquire an image
                 uint32_t image_idx;
-                res = vkAcquireNextImageKHR(device, swapchain.handle, UINT64_MAX,
+                res = vkAcquireNextImageKHR(base.device, swapchain.handle, UINT64_MAX,
                                             rproc->acquire_sem, VK_NULL_HANDLE, &image_idx);
                 if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                         must_recreate = 1;
@@ -614,10 +462,10 @@ int main() {
 
                 // Wait until whoever is rendering to the image is done
                 if (image_fences[image_idx] != VK_NULL_HANDLE)
-                        vkWaitForFences(device, 1, &image_fences[image_idx], VK_TRUE, UINT64_MAX);
+                        vkWaitForFences(base.device, 1, &image_fences[image_idx], VK_TRUE, UINT64_MAX);
 
                 // Reset fence
-                res = vkResetFences(device, 1, &rproc->fence);
+                res = vkResetFences(base.device, 1, &rproc->fence);
                 assert(res == VK_SUCCESS);
 
                 // Mark it as in use by us
@@ -635,7 +483,7 @@ int main() {
                 submit_info.signalSemaphoreCount = 1;
                 submit_info.pSignalSemaphores = &rproc->render_sem;
 
-                res = vkQueueSubmit(queue, 1, &submit_info, rproc->fence);
+                res = vkQueueSubmit(base.queue, 1, &submit_info, rproc->fence);
                 assert(res == VK_SUCCESS);
 
                 // Present
@@ -647,7 +495,7 @@ int main() {
                 present_info.pSwapchains = &swapchain.handle;
                 present_info.pImageIndices = &image_idx;
 
-                res = vkQueuePresentKHR(queue, &present_info);
+                res = vkQueuePresentKHR(base.queue, &present_info);
                 if (res == VK_ERROR_OUT_OF_DATE_KHR) must_recreate = 1;
                 else assert(res == VK_SUCCESS);
 
@@ -663,39 +511,31 @@ int main() {
         printf("FPS: %.2f\n", fps);
 
         // Cleanup
-        vkDeviceWaitIdle(device);
+        vkDeviceWaitIdle(base.device);
 
-        for (int i = 0; i < rproc_ct; ++i) render_proc_destroy_sync(device, &rprocs[i]);
+        for (int i = 0; i < rproc_ct; ++i) render_proc_destroy_sync(base.device, &rprocs[i]);
 
-        vkDestroyPipeline(device, pipeline, NULL);
+        vkDestroyPipeline(base.device, pipeline, NULL);
 
-        vkDestroyPipelineLayout(device, pipeline_lt, NULL);
+        vkDestroyPipelineLayout(base.device, pipeline_lt, NULL);
 
-        vkDestroyCommandPool(device, cpool, NULL);
-        vkDestroyRenderPass(device, rpass, NULL);
+        vkDestroyCommandPool(base.device, cpool, NULL);
+        vkDestroyRenderPass(base.device, rpass, NULL);
 
-        vkDestroyShaderModule(device, vs, NULL);
-        vkDestroyShaderModule(device, fs, NULL);
+        vkDestroyShaderModule(base.device, vs, NULL);
+        vkDestroyShaderModule(base.device, fs, NULL);
 
-        fbs_destroy(device, swapchain.image_ct, fbs);
-        swapchain_destroy(device, &swapchain);
+        fbs_destroy(base.device, swapchain.image_ct, fbs);
+        swapchain_destroy(base.device, &swapchain);
 
-        buffer_destroy(device, &vbuf);
-        buffer_destroy(device, &ibuf);
+        buffer_destroy(base.device, &vbuf);
+        buffer_destroy(base.device, &ibuf);
 
-        for (int i = 0; i < rproc_ct; ++i) buffer_destroy(device, &ubufs[i]);
+        for (int i = 0; i < rproc_ct; ++i) buffer_destroy(base.device, &ubufs[i]);
 
-        vkDestroyDescriptorPool(device, dpool, NULL);
+        vkDestroyDescriptorPool(base.device, dpool, NULL);
 
-        vkDestroyDevice(device, NULL);
-
-        PFN_vkDestroyDebugUtilsMessengerEXT debug_destroy_fun = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-        assert(debug_destroy_fun != NULL);
-        debug_destroy_fun(instance, debug_msgr, NULL);
-
-        vkDestroySurfaceKHR(instance, surface, NULL);
-
-        vkDestroyInstance(instance, NULL);
+	base_destroy(&base);
 
         glfwDestroyWindow(window);
         glfwTerminate();
