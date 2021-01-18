@@ -239,22 +239,9 @@ int main() {
         assert(res == VK_SUCCESS);
 
 	// Vertex buffer
-	struct Buffer staging;
-	buffer_create(phys_dev, device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-	              sizeof(VERTICES), &staging);
-	buffer_mem_write(device, staging.mem, sizeof(VERTICES), VERTICES);
-
 	struct Buffer vbuf;
-	buffer_create(phys_dev, device, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-	              sizeof(VERTICES), &vbuf);
-
-	VkCommandBuffer copy_cbuf;
-	cbuf_alloc(device, cpool, &copy_cbuf);
-	buffer_copy(queue, copy_cbuf, staging.handle, vbuf.handle, vbuf.size);
-
-        buffer_destroy(device, &staging);
+	buffer_staged(phys_dev, device, queue, cpool, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+	              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(VERTICES), VERTICES, &vbuf);
 
         // Swapchain
         struct Swapchain swapchain;
