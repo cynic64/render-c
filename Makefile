@@ -3,13 +3,11 @@ CFLAGS=-O3 -Wall -Wextra -pedantic -Wno-sign-compare
 LIBS=-lvulkan -lglfw
 INCLUDES=-Iexternal/cglm/include
 
-square: examples/square.c src/ll/swapchain.h square-vs square-fs
+square: examples/square.c src/ll/swapchain.h shaders
 	$(CC) $(CFLAGS) $(LIBS) examples/square.c -o square
 
-square-vs: shaders/square/shader.vs.glsl
-	glslc -fshader-stage=vertex -o shaders/square/shader.vs.spv shaders/square/shader.vs.glsl
-square-fs: shaders/square/shader.fs.glsl
-	glslc -fshader-stage=fragment -o shaders/square/shader.fs.spv shaders/square/shader.fs.glsl
+shaders: shaders/square/shader.fs.glsl shaders/square/shader.vs.glsl shaders/uniform/shader.fs.glsl shaders/uniform/shader.vs.glsl
+	./compile_shaders.pl
 
 .PHONY: clean
 
