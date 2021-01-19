@@ -1,8 +1,7 @@
 CC=cc
 EXTRA=
-CFLAGS=-O3 -Wall -Wextra -pedantic -Wno-sign-compare $(EXTRA)
+CFLAGS=-O2 -Wall -Wextra -pedantic -Wno-sign-compare $(EXTRA)
 LIBS=-lvulkan -lglfw -lm
-INCLUDES=-Iexternal/cglm/include
 
 main: main.c ll-headers shaders
 	$(CC) $(CFLAGS) $(LIBS) main.c -o main

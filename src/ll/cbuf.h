@@ -22,6 +22,8 @@ void cbuf_begin_onetime(VkCommandBuffer cbuf) {
 }
 
 void cbuf_submit_wait(VkQueue queue, VkCommandBuffer cbuf) {
+        vkEndCommandBuffer(cbuf);
+
         VkSubmitInfo info = {0};
         info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         info.commandBufferCount = 1;

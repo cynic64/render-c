@@ -1,4 +1,8 @@
-#include <cglm/cglm.h>
+#include "external/cglm/include/cglm/cglm.h"
+#define STBI_ONLY_PNG
+#define STBI_FAILURE_USERMSG
+#define STB_IMAGE_IMPLEMENTATION
+#include "external/stb_image/stb_image.h"
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
@@ -37,12 +41,13 @@ const int CONCURRENT_FRAMES_MAX = 4;
 struct Vertex {
         vec2 pos;
         vec3 color;
+        vec2 tex_c;
 };
 
-const struct Vertex VERTICES[] = {{{-0.8F, -0.8F}, {1.0F, 0.0F, 0.0F}},
-                                   {{0.8F, -0.8F}, {0.0F, 1.0F, 0.0F}},
-                                   {{-0.8F, 0.8F}, {0.0F, 0.0F, 1.0F}},
-                                   {{0.8F, 0.8F}, {1.0F, 0.0F, 1.0F}}};
+const struct Vertex VERTICES[] = {{{-0.8F, 0.8F}, {1.0F, 0.0F, 0.0F}, {0.0F, 0.0F}},
+                                   {{0.8F, 0.8F}, {0.0F, 1.0F, 0.0F}, {1.0F, 0.0F}},
+                                   {{-0.8F, -0.8F}, {0.0F, 0.0F, 1.0F}, {0.0F, 1.0F}},
+                                   {{0.8F, -0.8F}, {1.0F, 0.0F, 1.0F}, {1.0F, 1.0F}}};
 const uint32_t VERTEX_CT = sizeof(VERTICES) / sizeof(VERTICES[0]);
 const uint16_t INDICES[] = {0, 1, 3, 0, 3, 2};
 const uint32_t INDEX_CT = sizeof(INDICES) / sizeof(INDICES[0]);
@@ -77,6 +82,39 @@ void fbs_destroy(VkDevice device, uint32_t fb_ct, VkFramebuffer* fbs) {
         for (int i = 0; i < fb_ct; ++i) vkDestroyFramebuffer(device, fbs[i], NULL);
 }
 
+// Allocates own memory, call stbi_image_free afterwards
+stbi_uc* load_tex(const char* path, int* width, int* height) {
+	int channels;
+        return stbi_load(path, width, height, &channels, STBI_rgb_alpha);
+}
+
+void image_trans(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImage image, VkImageAspectFlags aspect,
+                 VkImageLayout old_lt, VkImageLayout new_lt, VkAccessFlags src_access, VkAccessFlags dst_access,
+                 VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage)
+ {
+	VkImageMemoryBarrier barrier = {0};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = old_lt;
+	barrier.newLayout = new_lt;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = aspect;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.srcAccessMask = src_access;
+	barrier.dstAccessMask = dst_access;
+
+	VkCommandBuffer cbuf;
+	cbuf_alloc(device, cpool, &cbuf);
+	cbuf_begin_onetime(cbuf);
+	vkCmdPipelineBarrier(cbuf, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
+	cbuf_submit_wait(queue, cbuf);
+	vkFreeCommandBuffers(device, cpool, 1, &cbuf);
+}
+
 int main() {
         // GLFW
         glfwInit();
@@ -104,6 +142,115 @@ int main() {
         buffer_staged(base.phys_dev, base.device, base.queue, cpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(INDICES), INDICES, &ibuf);
 
+        // Load texture
+        int tex_width, tex_height;
+	stbi_uc* pixels = load_tex("assets/cat.png", &tex_width, &tex_height);
+	assert(pixels != NULL);
+	VkDeviceSize tex_size = tex_width * tex_height * 4;
+
+	// Create source buffer
+	struct Buffer tex_buf;
+	buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+	              tex_size, &tex_buf);
+	buffer_mem_write(base.device, tex_buf.mem, tex_size, pixels);
+	stbi_image_free(pixels);
+
+	// Create texture
+	VkFormat tex_fmt = VK_FORMAT_B8G8R8A8_SRGB;
+
+	VkImageCreateInfo tex_info = {0};
+	tex_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+	tex_info.imageType = VK_IMAGE_TYPE_2D;
+	tex_info.extent.width = tex_width;
+	tex_info.extent.height = tex_height;
+	tex_info.extent.depth = 1;
+	tex_info.mipLevels = 1;
+	tex_info.arrayLayers = 1;
+	tex_info.format = tex_fmt;
+	tex_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+	tex_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	tex_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+	tex_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	tex_info.samples = VK_SAMPLE_COUNT_1_BIT;
+
+	VkImage tex;
+	res = vkCreateImage(base.device, &tex_info, NULL, &tex);
+	assert(res == VK_SUCCESS);
+
+	VkMemoryRequirements tex_mem_reqs;
+	vkGetImageMemoryRequirements(base.device, tex, &tex_mem_reqs);
+
+	uint32_t tex_mem_idx = mem_type_idx_find(base.phys_dev, tex_mem_reqs.memoryTypeBits,
+                                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	VkDeviceMemory tex_mem;
+	buffer_mem_alloc(base.device, tex_mem_idx, tex_mem_reqs.size, &tex_mem);
+
+	vkBindImageMemory(base.device, tex, tex_mem, 0);
+
+	// Copy to texture
+	image_trans(base.device, base.queue, cpool, tex, VK_IMAGE_ASPECT_COLOR_BIT,
+	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
+	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+	VkBufferImageCopy copy_region = {0};
+	copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	copy_region.imageSubresource.mipLevel = 0;
+	copy_region.imageSubresource.baseArrayLayer = 0;
+	copy_region.imageSubresource.layerCount = 1;
+	copy_region.imageExtent = (VkExtent3D){tex_width, tex_height, 1};
+
+	VkCommandBuffer copy_cbuf;
+	cbuf_alloc(base.device, cpool, &copy_cbuf);
+	cbuf_begin_onetime(copy_cbuf);
+	vkCmdCopyBufferToImage(copy_cbuf, tex_buf.handle, tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+	cbuf_submit_wait(base.queue, copy_cbuf);
+	vkFreeCommandBuffers(base.device, cpool, 1, &copy_cbuf);
+
+	image_trans(base.device, base.queue, cpool, tex, VK_IMAGE_ASPECT_COLOR_BIT,
+	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+	// Create view
+	VkImageViewCreateInfo tex_view_info = {0};
+	tex_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	tex_view_info.image = tex;
+	tex_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	tex_view_info.format = tex_fmt;
+	tex_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	tex_view_info.subresourceRange.baseMipLevel = 0;
+	tex_view_info.subresourceRange.levelCount = 1;
+	tex_view_info.subresourceRange.baseArrayLayer = 0;
+	tex_view_info.subresourceRange.layerCount = 1;
+
+	// Create sampler
+	VkPhysicalDeviceProperties phys_dev_props;
+	vkGetPhysicalDeviceProperties(base.phys_dev, &phys_dev_props);
+
+	VkSamplerCreateInfo sampler_info = {0};
+	sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+	sampler_info.magFilter = VK_FILTER_LINEAR;
+	sampler_info.minFilter = VK_FILTER_LINEAR;
+	sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	sampler_info.anisotropyEnable = VK_TRUE;
+	sampler_info.maxAnisotropy = phys_dev_props.limits.maxSamplerAnisotropy;
+	sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+	sampler_info.unnormalizedCoordinates = VK_FALSE;
+	sampler_info.compareEnable = VK_FALSE;
+	sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+	VkSampler tex_sampler;
+	res = vkCreateSampler(base.device, &sampler_info, NULL, &tex_sampler);
+	assert(res == VK_SUCCESS);
+
+	VkImageView tex_view;
+	res = vkCreateImageView(base.device, &tex_view_info, NULL, &tex_view);
+	assert(res == VK_SUCCESS);
+
         // Swapchain
         struct Swapchain swapchain;
         swapchain_create(base.surface, base.phys_dev, base.device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
@@ -114,7 +261,7 @@ int main() {
         vtx_bind_desc.stride = sizeof(struct Vertex);
         vtx_bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        VkVertexInputAttributeDescription vtx_attr_descs[2] = {0};
+        VkVertexInputAttributeDescription vtx_attr_descs[3] = {0};
         vtx_attr_descs[0].binding = 0;
         vtx_attr_descs[0].location = 0;
         vtx_attr_descs[0].format = VK_FORMAT_R32G32_SFLOAT;
@@ -123,6 +270,10 @@ int main() {
         vtx_attr_descs[1].location = 1;
         vtx_attr_descs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
         vtx_attr_descs[1].offset = offsetof(struct Vertex, color);
+        vtx_attr_descs[2].binding = 0;
+        vtx_attr_descs[2].location = 2;
+        vtx_attr_descs[2].format = VK_FORMAT_R32G32_SFLOAT;
+        vtx_attr_descs[2].offset = offsetof(struct Vertex, tex_c);
 
         // Load shaders
         VkShaderModule vs = load_shader(base.device, "shaders/shader.vs.spv");
@@ -179,17 +330,22 @@ int main() {
         res = vkCreateRenderPass(base.device, &rpass_info, NULL, &rpass);
         assert(res == VK_SUCCESS);
 
-        // Descriptor set layout
-        VkDescriptorSetLayoutBinding desc_lt_bind = {0};
-        desc_lt_bind.binding = 0;
-        desc_lt_bind.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        desc_lt_bind.descriptorCount = 1;
-        desc_lt_bind.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        // Descriptor set layouts
+       	VkDescriptorSetLayoutBinding desc_lt_binds[2] = {0};
+        desc_lt_binds[0].binding = 0;
+        desc_lt_binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        desc_lt_binds[0].descriptorCount = 1;
+        desc_lt_binds[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+
+        desc_lt_binds[1].binding = 1;
+        desc_lt_binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        desc_lt_binds[1].descriptorCount = 1;
+        desc_lt_binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
         VkDescriptorSetLayoutCreateInfo desc_lt_info = {0};
         desc_lt_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        desc_lt_info.bindingCount = 1;
-        desc_lt_info.pBindings = &desc_lt_bind;
+        desc_lt_info.bindingCount = sizeof(desc_lt_binds) / sizeof(desc_lt_binds[0]);
+        desc_lt_info.pBindings = desc_lt_binds;
 
         VkDescriptorSetLayout desc_lt = {0};
         res = vkCreateDescriptorSetLayout(base.device, &desc_lt_info, NULL, &desc_lt);
@@ -210,7 +366,7 @@ int main() {
         input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         input_info.vertexBindingDescriptionCount = 1;
         input_info.pVertexBindingDescriptions = &vtx_bind_desc;
-        input_info.vertexAttributeDescriptionCount = 2;
+        input_info.vertexAttributeDescriptionCount = sizeof(vtx_attr_descs) / sizeof(vtx_attr_descs[0]);
         input_info.pVertexAttributeDescriptions = vtx_attr_descs;
 
         VkPipelineInputAssemblyStateCreateInfo input_assembly = {0};
@@ -293,14 +449,16 @@ int main() {
         };
 
         // Descriptor pool
-        VkDescriptorPoolSize dpool_size = {0};
-        dpool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        dpool_size.descriptorCount = rproc_ct;
+        VkDescriptorPoolSize dpool_sizes[2] = {0};
+        dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        dpool_sizes[0].descriptorCount = rproc_ct;
+        dpool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        dpool_sizes[1].descriptorCount = rproc_ct;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        dpool_info.poolSizeCount = 1;
-        dpool_info.pPoolSizes = &dpool_size;
+        dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
+        dpool_info.pPoolSizes = dpool_sizes;
         dpool_info.maxSets = rproc_ct;
 
         VkDescriptorPool dpool;
@@ -328,16 +486,29 @@ int main() {
                 desc_buf.buffer = ubufs[i].handle;
                 desc_buf.range = sizeof(ubufs[i]);
 
-                VkWriteDescriptorSet desc_write = {0};
-                desc_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                desc_write.dstSet = sets[i];
-                desc_write.dstBinding = 0;
-                desc_write.dstArrayElement = 0;
-                desc_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                desc_write.descriptorCount = 1;
-                desc_write.pBufferInfo = &desc_buf;
+                VkWriteDescriptorSet desc_writes[2] = {0};
+                desc_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                desc_writes[0].dstSet = sets[i];
+                desc_writes[0].dstBinding = 0;
+                desc_writes[0].dstArrayElement = 0;
+                desc_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                desc_writes[0].descriptorCount = 1;
+                desc_writes[0].pBufferInfo = &desc_buf;
 
-                vkUpdateDescriptorSets(base.device, 1, &desc_write, 0, NULL);
+                VkDescriptorImageInfo desc_image = {0};
+                desc_image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                desc_image.imageView = tex_view;
+                desc_image.sampler = tex_sampler;
+
+                desc_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                desc_writes[1].dstSet = sets[i];
+                desc_writes[1].dstBinding = 1;
+                desc_writes[1].dstArrayElement = 0;
+                desc_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                desc_writes[1].descriptorCount = 1;
+                desc_writes[1].pImageInfo = &desc_image;
+
+                vkUpdateDescriptorSets(base.device, sizeof(desc_writes) / sizeof(desc_writes[0]), desc_writes, 0, NULL);
         }
 
         vkDestroyDescriptorSetLayout(base.device, desc_lt, NULL);
@@ -391,7 +562,7 @@ int main() {
                 clock_gettime(CLOCK_MONOTONIC_RAW, &time);
                 double elapsed = (double) ((time.tv_sec * 1000000000 + time.tv_nsec)
                                          - (start_time.tv_sec * 1000000000 + start_time.tv_nsec)) / 1000000000.0F;
-                vec3 eye = {5.0F * sin(elapsed), 2.0F, 5.0F * cos(elapsed)};
+                vec3 eye = {2.0F * sin(elapsed), 1.0F, 2.0F * cos(elapsed)};
 
                 struct Uniform uni_data;
                 glm_mat4_identity(uni_data.model);
@@ -527,6 +698,12 @@ int main() {
 
         fbs_destroy(base.device, swapchain.image_ct, fbs);
         swapchain_destroy(base.device, &swapchain);
+
+	vkDestroyImage(base.device, tex, NULL);
+	vkFreeMemory(base.device, tex_mem, NULL);
+	vkDestroyImageView(base.device, tex_view, NULL);
+	vkDestroySampler(base.device, tex_sampler, NULL);
+        buffer_destroy(base.device, &tex_buf);
 
         buffer_destroy(base.device, &vbuf);
         buffer_destroy(base.device, &ibuf);

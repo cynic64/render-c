@@ -86,8 +86,6 @@ void buffer_copy(VkQueue queue, VkCommandBuffer cbuf, VkBuffer src, VkBuffer dst
         copy_region.size = size;
         vkCmdCopyBuffer(cbuf, src, dst, 1, &copy_region);
 
-        vkEndCommandBuffer(cbuf);
-
         cbuf_submit_wait(queue, cbuf);
 }
 
