@@ -1,6 +1,8 @@
 #ifndef LL_CBUF_H
 #define LL_CBUF_H
 
+#include <vulkan/vulkan.h>
+
 #include <assert.h>
 
 void cbuf_alloc(VkDevice device, VkCommandPool cpool, VkCommandBuffer* cbuf) {

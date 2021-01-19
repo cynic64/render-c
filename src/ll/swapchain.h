@@ -2,6 +2,7 @@
 #define LL_SWAPCHAIN_H
 
 #include <vulkan/vulkan.h>
+
 #include <assert.h>
 #include <stdlib.h>
 

@@ -9,6 +9,7 @@
 
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
+#include "src/ll/image.h"
 #include "src/ll/render_proc.h"
 #include "src/ll/shader.h"
 #include "src/ll/swapchain.h"
@@ -39,17 +40,21 @@ const int CONCURRENT_FRAMES_MAX = 4;
 #endif
 
 struct Vertex {
-        vec2 pos;
-        vec3 color;
+        vec3 pos;
         vec2 tex_c;
 };
 
-const struct Vertex VERTICES[] = {{{-0.8F, 0.8F}, {1.0F, 0.0F, 0.0F}, {0.0F, 0.0F}},
-                                   {{0.8F, 0.8F}, {0.0F, 1.0F, 0.0F}, {1.0F, 0.0F}},
-                                   {{-0.8F, -0.8F}, {0.0F, 0.0F, 1.0F}, {0.0F, 1.0F}},
-                                   {{0.8F, -0.8F}, {1.0F, 0.0F, 1.0F}, {1.0F, 1.0F}}};
+const struct Vertex VERTICES[] = {{{-0.8F, 0.5F, 0.8F}, {0.0F, 0.0F}},
+                                   {{0.8F, 0.5F, 0.8F}, {1.0F, 0.0F}},
+                                   {{-0.8F, 0.5F, -0.8F}, {0.0F, 1.0F}},
+                                   {{0.8F, 0.5F, -0.8F}, {1.0F, 1.0F}},
+
+                                   {{-0.8F, -0.5F, 0.8F}, {0.0F, 0.0F}},
+                                   {{0.8F, -0.5F, 0.8F}, {1.0F, 0.0F}},
+                                   {{-0.8F, -0.5F, -0.8F}, {0.0F, 1.0F}},
+                                   {{0.8F, -0.5F, -0.8F}, {1.0F, 1.0F}}};
 const uint32_t VERTEX_CT = sizeof(VERTICES) / sizeof(VERTICES[0]);
-const uint16_t INDICES[] = {0, 1, 3, 0, 3, 2};
+const uint16_t INDICES[] = {0, 1, 3, 0, 3, 2, 4, 5, 7, 4, 7, 6};
 const uint32_t INDEX_CT = sizeof(INDICES) / sizeof(INDICES[0]);
 
 struct Uniform {
@@ -60,14 +65,18 @@ struct Uniform {
 
 // Memory must be preallocated
 void fbs_create(VkDevice device, VkRenderPass rpass, uint32_t width, uint32_t height,
-                uint32_t view_ct, VkImageView* views, VkFramebuffer* fbs)
+                uint32_t view_ct, VkImageView* views, VkImageView depth, VkFramebuffer* fbs)
 {
         for (int i = 0; i < view_ct; ++i) {
+                VkImageView attachments[2];
+                attachments[0] = views[i];
+                attachments[1] = depth;
+
                 VkFramebufferCreateInfo info = {0};
                 info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
                 info.renderPass = rpass;
-                info.attachmentCount = 1;
-                info.pAttachments = &views[i];
+                info.attachmentCount = sizeof(attachments) / sizeof(attachments[0]);
+                info.pAttachments = attachments;
                 info.width = width;
                 info.height = height;
                 info.layers = 1;
@@ -153,43 +162,18 @@ int main() {
 	buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 	              tex_size, &tex_buf);
-	buffer_mem_write(base.device, tex_buf.mem, tex_size, pixels);
+	mem_write(base.device, tex_buf.mem, tex_size, pixels);
 	stbi_image_free(pixels);
 
 	// Create texture
-	VkFormat tex_fmt = VK_FORMAT_B8G8R8A8_SRGB;
-
-	VkImageCreateInfo tex_info = {0};
-	tex_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-	tex_info.imageType = VK_IMAGE_TYPE_2D;
-	tex_info.extent.width = tex_width;
-	tex_info.extent.height = tex_height;
-	tex_info.extent.depth = 1;
-	tex_info.mipLevels = 1;
-	tex_info.arrayLayers = 1;
-	tex_info.format = tex_fmt;
-	tex_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-	tex_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	tex_info.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-	tex_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	tex_info.samples = VK_SAMPLE_COUNT_1_BIT;
-
-	VkImage tex;
-	res = vkCreateImage(base.device, &tex_info, NULL, &tex);
-	assert(res == VK_SUCCESS);
-
-	VkMemoryRequirements tex_mem_reqs;
-	vkGetImageMemoryRequirements(base.device, tex, &tex_mem_reqs);
-
-	uint32_t tex_mem_idx = mem_type_idx_find(base.phys_dev, tex_mem_reqs.memoryTypeBits,
-                                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	VkDeviceMemory tex_mem;
-	buffer_mem_alloc(base.device, tex_mem_idx, tex_mem_reqs.size, &tex_mem);
-
-	vkBindImageMemory(base.device, tex, tex_mem, 0);
+	struct Image tex;
+	image_create(base.phys_dev, base.device, VK_FORMAT_R8G8B8A8_SRGB, tex_width, tex_height,
+	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &tex);
 
 	// Copy to texture
-	image_trans(base.device, base.queue, cpool, tex, VK_IMAGE_ASPECT_COLOR_BIT,
+	image_trans(base.device, base.queue, cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
 	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
 	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
@@ -204,26 +188,14 @@ int main() {
 	VkCommandBuffer copy_cbuf;
 	cbuf_alloc(base.device, cpool, &copy_cbuf);
 	cbuf_begin_onetime(copy_cbuf);
-	vkCmdCopyBufferToImage(copy_cbuf, tex_buf.handle, tex, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
+	vkCmdCopyBufferToImage(copy_cbuf, tex_buf.handle, tex.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
 	cbuf_submit_wait(base.queue, copy_cbuf);
 	vkFreeCommandBuffers(base.device, cpool, 1, &copy_cbuf);
 
-	image_trans(base.device, base.queue, cpool, tex, VK_IMAGE_ASPECT_COLOR_BIT,
+	image_trans(base.device, base.queue, cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
 	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
 	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-
-	// Create view
-	VkImageViewCreateInfo tex_view_info = {0};
-	tex_view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-	tex_view_info.image = tex;
-	tex_view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	tex_view_info.format = tex_fmt;
-	tex_view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	tex_view_info.subresourceRange.baseMipLevel = 0;
-	tex_view_info.subresourceRange.levelCount = 1;
-	tex_view_info.subresourceRange.baseArrayLayer = 0;
-	tex_view_info.subresourceRange.layerCount = 1;
 
 	// Create sampler
 	VkPhysicalDeviceProperties phys_dev_props;
@@ -247,13 +219,17 @@ int main() {
 	res = vkCreateSampler(base.device, &sampler_info, NULL, &tex_sampler);
 	assert(res == VK_SUCCESS);
 
-	VkImageView tex_view;
-	res = vkCreateImageView(base.device, &tex_view_info, NULL, &tex_view);
-	assert(res == VK_SUCCESS);
-
         // Swapchain
         struct Swapchain swapchain;
         swapchain_create(base.surface, base.phys_dev, base.device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
+
+	// Depth buffer
+	const VkFormat depth_fmt = VK_FORMAT_D32_SFLOAT;
+	struct Image depth_img;
+	image_create(base.phys_dev, base.device, depth_fmt, swapchain.width, swapchain.height,
+	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, &depth_img);
 
         // Vertex input
         VkVertexInputBindingDescription vtx_bind_desc = {0};
@@ -261,19 +237,15 @@ int main() {
         vtx_bind_desc.stride = sizeof(struct Vertex);
         vtx_bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        VkVertexInputAttributeDescription vtx_attr_descs[3] = {0};
+        VkVertexInputAttributeDescription vtx_attr_descs[2] = {0};
         vtx_attr_descs[0].binding = 0;
         vtx_attr_descs[0].location = 0;
-        vtx_attr_descs[0].format = VK_FORMAT_R32G32_SFLOAT;
+        vtx_attr_descs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         vtx_attr_descs[0].offset = offsetof(struct Vertex, pos);
         vtx_attr_descs[1].binding = 0;
         vtx_attr_descs[1].location = 1;
-        vtx_attr_descs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-        vtx_attr_descs[1].offset = offsetof(struct Vertex, color);
-        vtx_attr_descs[2].binding = 0;
-        vtx_attr_descs[2].location = 2;
-        vtx_attr_descs[2].format = VK_FORMAT_R32G32_SFLOAT;
-        vtx_attr_descs[2].offset = offsetof(struct Vertex, tex_c);
+        vtx_attr_descs[1].format = VK_FORMAT_R32G32_SFLOAT;
+        vtx_attr_descs[1].offset = offsetof(struct Vertex, tex_c);
 
         // Load shaders
         VkShaderModule vs = load_shader(base.device, "shaders/shader.vs.spv");
@@ -290,37 +262,57 @@ int main() {
         shaders[1].pName = "main";
 
         // Render pass
-        VkAttachmentDescription attach_desc = {0};
-        attach_desc.format = swapchain.format;
-        attach_desc.samples = VK_SAMPLE_COUNT_1_BIT;
-        attach_desc.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-        attach_desc.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        attach_desc.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-        attach_desc.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-        attach_desc.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attach_desc.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        VkAttachmentDescription attachments[2] = {0};
+        attachments[0].format = swapchain.format;
+        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-        VkAttachmentReference attach_ref = {0};
-        attach_ref.attachment = 0;
-        attach_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        attachments[1].format = depth_fmt;
+        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference color_ref = {0};
+        color_ref.attachment = 0;
+        color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference depth_ref = {0};
+        depth_ref.attachment = 1;
+        depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
         VkSubpassDescription subpass = {0};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &attach_ref;
+        subpass.pColorAttachments = &color_ref;
+        subpass.pDepthStencilAttachment = &depth_ref;
 
         VkSubpassDependency subpass_dep = {0};
         subpass_dep.srcSubpass = VK_SUBPASS_EXTERNAL;
         subpass_dep.dstSubpass = 0;
-        subpass_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        subpass_dep.srcAccessMask = 0;
-        subpass_dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        subpass_dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        subpass_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                                 | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                                 | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        subpass_dep.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        subpass_dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                                 | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                                 | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+        subpass_dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                                  | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                                  | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
         VkRenderPassCreateInfo rpass_info = {0};
         rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-        rpass_info.attachmentCount = 1;
-        rpass_info.pAttachments = &attach_desc;
+        rpass_info.attachmentCount = sizeof(attachments) / sizeof(attachments[0]);
+        rpass_info.pAttachments = attachments;
         rpass_info.subpassCount = 1;
         rpass_info.pSubpasses = &subpass;
         rpass_info.dependencyCount = 1;
@@ -380,7 +372,7 @@ int main() {
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0F;
-        rasterizer.cullMode = VK_CULL_MODE_NONE;
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
         rasterizer.depthBiasEnable = VK_FALSE;
 
@@ -388,6 +380,12 @@ int main() {
         viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
         viewport_state.viewportCount = 1;
         viewport_state.scissorCount = 1;
+
+        VkPipelineDepthStencilStateCreateInfo depth_state = {0};
+        depth_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+        depth_state.depthTestEnable = VK_TRUE;
+        depth_state.depthWriteEnable = VK_TRUE;
+        depth_state.depthCompareOp = VK_COMPARE_OP_LESS;
 
         VkPipelineMultisampleStateCreateInfo multisampling = {0};
         multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -420,6 +418,7 @@ int main() {
         pipeline_info.pInputAssemblyState = &input_assembly;
         pipeline_info.pRasterizationState = &rasterizer;
         pipeline_info.pViewportState = &viewport_state;
+        pipeline_info.pDepthStencilState = &depth_state;
         pipeline_info.pMultisampleState = &multisampling;
         pipeline_info.pColorBlendState = &color_blend;
         pipeline_info.pDynamicState = &dyn_state_info;
@@ -433,7 +432,8 @@ int main() {
 
         // Framebuffers
         VkFramebuffer* fbs = malloc(swapchain.image_ct * sizeof(fbs[0]));
-        fbs_create(base.device, rpass, swapchain.width, swapchain.height, swapchain.image_ct, swapchain.views, fbs);
+        fbs_create(base.device, rpass, swapchain.width, swapchain.height,
+                   swapchain.image_ct, swapchain.views, depth_img.view, fbs);
 
         // Render processes
         uint32_t rproc_ct = CONCURRENT_FRAMES_MAX;
@@ -497,7 +497,7 @@ int main() {
 
                 VkDescriptorImageInfo desc_image = {0};
                 desc_image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                desc_image.imageView = tex_view;
+                desc_image.imageView = tex.view;
                 desc_image.sampler = tex_sampler;
 
                 desc_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -540,7 +540,7 @@ int main() {
                         assert(swapchain.format == old_format && swapchain.image_ct == old_image_ct);
 
                         fbs_create(base.device, rpass, swapchain.width, swapchain.height,
-                                   swapchain.image_ct, swapchain.views, fbs);
+                                   swapchain.image_ct, swapchain.views, depth_img.view, fbs);
 
                         for (int i = 0; i < CONCURRENT_FRAMES_MAX; ++i) {
                                 render_proc_destroy_sync(base.device, &rprocs[i]);
@@ -567,9 +567,9 @@ int main() {
                 struct Uniform uni_data;
                 glm_mat4_identity(uni_data.model);
                 glm_lookat(eye, (vec3){0.0F, 0.0F, 0.0F}, (vec3){0.0F, -1.0F, 0.0F}, uni_data.view);
-                glm_perspective(1.0F, 1.0F, 0.1F, 10.0F, uni_data.proj);
+                glm_perspective(1.0F, (float) swapchain.width / (float) swapchain.height, 0.1F, 10.0F, uni_data.proj);
                 struct Buffer* ubuf = &ubufs[rproc_idx];
-                buffer_mem_write(base.device, ubuf->mem, sizeof(uni_data), &uni_data);
+                mem_write(base.device, ubuf->mem, sizeof(uni_data), &uni_data);
 
                 // Wait for the render process using these sync objects to finish rendering
                 res = vkWaitForFences(base.device, 1, &rproc->fence, VK_TRUE, UINT64_MAX);
@@ -593,7 +593,8 @@ int main() {
                 cbuf_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 vkBeginCommandBuffer(rproc->cbuf, &cbuf_begin_info);
 
-                VkClearValue clear_color = {{{0.0F, 0.0F, 0.0F, 1.0F}}};
+                VkClearValue clear_vals[2] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
+                                              {{{1.0F, 0.0F}}}};
 
                 VkRenderPassBeginInfo cbuf_rpass_info = {0};
                 cbuf_rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -601,8 +602,8 @@ int main() {
                 cbuf_rpass_info.framebuffer = fbs[image_idx];
                 cbuf_rpass_info.renderArea.extent.width = swapchain.width;
                 cbuf_rpass_info.renderArea.extent.height = swapchain.height;
-                cbuf_rpass_info.clearValueCount = 1;
-                cbuf_rpass_info.pClearValues = &clear_color;
+                cbuf_rpass_info.clearValueCount = sizeof(clear_vals) / sizeof(clear_vals[0]);
+                cbuf_rpass_info.pClearValues = clear_vals;
                 vkCmdBeginRenderPass(rproc->cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
                 vkCmdBindPipeline(rproc->cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
@@ -699,11 +700,11 @@ int main() {
         fbs_destroy(base.device, swapchain.image_ct, fbs);
         swapchain_destroy(base.device, &swapchain);
 
-	vkDestroyImage(base.device, tex, NULL);
-	vkFreeMemory(base.device, tex_mem, NULL);
-	vkDestroyImageView(base.device, tex_view, NULL);
+	image_destroy(base.device, &tex);
 	vkDestroySampler(base.device, tex_sampler, NULL);
         buffer_destroy(base.device, &tex_buf);
+
+        image_destroy(base.device, &depth_img);
 
         buffer_destroy(base.device, &vbuf);
         buffer_destroy(base.device, &ibuf);
