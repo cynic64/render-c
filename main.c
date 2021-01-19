@@ -97,6 +97,15 @@ stbi_uc* load_tex(const char* path, int* width, int* height) {
         return stbi_load(path, width, height, &channels, STBI_rgb_alpha);
 }
 
+void depth_create(VkPhysicalDevice phys_dev, VkDevice device,
+                  VkFormat format, uint32_t width, uint32_t height, struct Image* image)
+{
+	image_create(phys_dev, device, format, width, height,
+	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, image);
+}
+
 void image_trans(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImage image, VkImageAspectFlags aspect,
                  VkImageLayout old_lt, VkImageLayout new_lt, VkAccessFlags src_access, VkAccessFlags dst_access,
                  VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage)
@@ -226,10 +235,7 @@ int main() {
 	// Depth buffer
 	const VkFormat depth_fmt = VK_FORMAT_D32_SFLOAT;
 	struct Image depth_img;
-	image_create(base.phys_dev, base.device, depth_fmt, swapchain.width, swapchain.height,
-	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-	             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, &depth_img);
+	depth_create(base.phys_dev, base.device, depth_fmt, swapchain.width, swapchain.height, &depth_img);
 
         // Vertex input
         VkVertexInputBindingDescription vtx_bind_desc = {0};
@@ -538,6 +544,10 @@ int main() {
                                          SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
                         assert(swapchain.format == old_format && swapchain.image_ct == old_image_ct);
+
+                        image_destroy(base.device, &depth_img);
+                        depth_create(base.phys_dev, base.device, depth_fmt,
+                                     swapchain.width, swapchain.height, &depth_img);
 
                         fbs_create(base.device, rpass, swapchain.width, swapchain.height,
                                    swapchain.image_ct, swapchain.views, depth_img.view, fbs);
