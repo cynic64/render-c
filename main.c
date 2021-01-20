@@ -34,7 +34,7 @@ const int DEVICE_EXT_CT = 1;
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 
-const int CONCURRENT_FRAMES_MAX = 4;
+const int RENDER_PROCESSES = 4;
 
 #ifndef NDEBUG
         const int VALIDATION_ON = 1;
@@ -430,13 +430,12 @@ int main() {
                    swapchain.image_ct, swapchain.views, depth_img.view, fbs);
 
         // Render processes
-        uint32_t rproc_ct = CONCURRENT_FRAMES_MAX;
-        struct RenderProc* rprocs = malloc(rproc_ct * sizeof(rprocs[0]));
-        for (int i = 0; i < rproc_ct; ++i) render_proc_create(base.device, cpool, &rprocs[i]);
+        struct RenderProc rprocs[RENDER_PROCESSES];
+        for (int i = 0; i < RENDER_PROCESSES; ++i) render_proc_create(base.device, cpool, &rprocs[i]);
 
         // Uniform buffers (one for every render process)
-        struct Buffer* ubufs = malloc(rproc_ct * sizeof(ubufs[0]));
-        for (int i = 0; i < rproc_ct; ++i) {
+        struct Buffer ubufs[RENDER_PROCESSES];
+        for (int i = 0; i < RENDER_PROCESSES; ++i) {
                 buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                               sizeof(struct Uniform), &ubufs[i]);
@@ -445,23 +444,23 @@ int main() {
         // Descriptor pool
         VkDescriptorPoolSize dpool_sizes[2] = {0};
         dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        dpool_sizes[0].descriptorCount = rproc_ct;
+        dpool_sizes[0].descriptorCount = RENDER_PROCESSES;
         dpool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        dpool_sizes[1].descriptorCount = rproc_ct;
+        dpool_sizes[1].descriptorCount = RENDER_PROCESSES;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
         dpool_info.pPoolSizes = dpool_sizes;
-        dpool_info.maxSets = rproc_ct;
+        dpool_info.maxSets = RENDER_PROCESSES;
 
         VkDescriptorPool dpool;
         res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
         assert(res == VK_SUCCESS);
 
         // Sets
-        VkDescriptorSet* sets = malloc(rproc_ct * sizeof(sets[0]));
-        for (int i = 0; i < rproc_ct; ++i) {
+        VkDescriptorSet sets[RENDER_PROCESSES];
+        for (int i = 0; i < RENDER_PROCESSES; ++i) {
                 struct Descriptor descriptors[2] = {0};
                 descriptors[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
                 descriptors[0].binding = 0;
@@ -515,7 +514,7 @@ int main() {
                         fbs_create(base.device, rpass, swapchain.width, swapchain.height,
                                    swapchain.image_ct, swapchain.views, depth_img.view, fbs);
 
-                        for (int i = 0; i < CONCURRENT_FRAMES_MAX; ++i) {
+                        for (int i = 0; i < RENDER_PROCESSES; ++i) {
                                 render_proc_destroy_sync(base.device, &rprocs[i]);
                                 render_proc_create_sync(base.device, &rprocs[i]);
                         }
@@ -527,7 +526,7 @@ int main() {
                         if (real_width != swapchain.width || real_height != swapchain.height) must_recreate = 1;
                 }
 
-                int rproc_idx = frame_ct % rproc_ct;
+                int rproc_idx = frame_ct % RENDER_PROCESSES;
                 struct RenderProc* const rproc = &rprocs[rproc_idx];
 
                 // Write to ubuf
@@ -658,7 +657,7 @@ int main() {
         // Cleanup
         vkDeviceWaitIdle(base.device);
 
-        for (int i = 0; i < rproc_ct; ++i) render_proc_destroy_sync(base.device, &rprocs[i]);
+        for (int i = 0; i < RENDER_PROCESSES; ++i) render_proc_destroy_sync(base.device, &rprocs[i]);
 
         vkDestroyPipeline(base.device, pipeline, NULL);
 
@@ -682,7 +681,7 @@ int main() {
         buffer_destroy(base.device, &vbuf);
         buffer_destroy(base.device, &ibuf);
 
-        for (int i = 0; i < rproc_ct; ++i) buffer_destroy(base.device, &ubufs[i]);
+        for (int i = 0; i < RENDER_PROCESSES; ++i) buffer_destroy(base.device, &ubufs[i]);
 
         vkDestroyDescriptorPool(base.device, dpool, NULL);
 

@@ -30,6 +30,7 @@ void set_create(VkDevice device, VkDescriptorPool dpool, VkDescriptorSetLayout l
         assert(res == VK_SUCCESS);
 
         VkWriteDescriptorSet* writes = malloc(descriptor_ct * sizeof(writes[0]));
+        memset(writes, 0, descriptor_ct * sizeof(writes[0]));
         for (int i = 0; i < descriptor_ct; ++i) {
                 writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writes[i].dstSet = *set;
