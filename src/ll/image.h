@@ -142,5 +142,22 @@ void image_copy_from_buffer(VkDevice device, VkQueue queue, VkCommandPool cpool,
 	vkFreeCommandBuffers(device, cpool, 1, &cbuf);
 }
 
+void framebuffer_create(VkDevice device, VkRenderPass rpass, uint32_t width, uint32_t height,
+                        uint32_t attachment_count, const VkImageView* views,
+                        VkFramebuffer* framebuffer)
+{
+        VkFramebufferCreateInfo info = {0};
+        info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        info.renderPass = rpass;
+        info.attachmentCount = attachment_count;
+        info.pAttachments = views;
+        info.width = width;
+        info.height = height;
+        info.layers = 1;
+
+        VkResult res = vkCreateFramebuffer(device, &info, NULL, framebuffer);
+        assert(res == VK_SUCCESS);
+}
+
 #endif // LL_IMAGE_H
 
