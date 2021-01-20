@@ -12,6 +12,7 @@
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
 #include "src/ll/image.h"
+#include "src/ll/pipeline.h"
 #include "src/ll/set.h"
 #include "src/ll/shader.h"
 #include "src/ll/swapchain.h"
@@ -335,81 +336,22 @@ int main() {
         assert(res == VK_SUCCESS);
 
         // Pipeline
-        VkPipelineVertexInputStateCreateInfo input_info = {0};
-        input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        input_info.vertexBindingDescriptionCount = 1;
-        input_info.pVertexBindingDescriptions = &vtx_bind_desc;
-        input_info.vertexAttributeDescriptionCount = sizeof(vtx_attr_descs) / sizeof(vtx_attr_descs[0]);
-        input_info.pVertexAttributeDescriptions = vtx_attr_descs;
+        VkPipelineVertexInputStateCreateInfo vertex_info = {0};
+        vertex_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+        vertex_info.vertexBindingDescriptionCount = 1;
+        vertex_info.pVertexBindingDescriptions = &vtx_bind_desc;
+        vertex_info.vertexAttributeDescriptionCount = sizeof(vtx_attr_descs) / sizeof(vtx_attr_descs[0]);
+        vertex_info.pVertexAttributeDescriptions = vtx_attr_descs;
 
-        VkPipelineInputAssemblyStateCreateInfo input_assembly = {0};
-        input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-        input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        input_assembly.primitiveRestartEnable = VK_FALSE;
+        struct PipelineSettings pipeline_settings = PIPELINE_SETTINGS_DEFAULT;
+        pipeline_settings.depth.depthTestEnable = VK_TRUE;
+        pipeline_settings.depth.depthWriteEnable = VK_TRUE;
+        pipeline_settings.depth.depthCompareOp = VK_COMPARE_OP_LESS;
 
-        VkPipelineRasterizationStateCreateInfo rasterizer = {0};
-        rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterizer.depthClampEnable = VK_FALSE;
-        rasterizer.rasterizerDiscardEnable = VK_FALSE;
-        rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-        rasterizer.lineWidth = 1.0F;
-        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-        rasterizer.depthBiasEnable = VK_FALSE;
-
-        VkPipelineViewportStateCreateInfo viewport_state = {0};
-        viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-        viewport_state.viewportCount = 1;
-        viewport_state.scissorCount = 1;
-
-        VkPipelineDepthStencilStateCreateInfo depth_state = {0};
-        depth_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-        depth_state.depthTestEnable = VK_TRUE;
-        depth_state.depthWriteEnable = VK_TRUE;
-        depth_state.depthCompareOp = VK_COMPARE_OP_LESS;
-
-        VkPipelineMultisampleStateCreateInfo multisampling = {0};
-        multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-        multisampling.sampleShadingEnable = VK_FALSE;
-        multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-        VkPipelineColorBlendAttachmentState color_blend_attach = {0};
-        color_blend_attach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        color_blend_attach.blendEnable = VK_FALSE;
-
-        VkPipelineColorBlendStateCreateInfo color_blend = {0};
-        color_blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-        color_blend.logicOpEnable = VK_FALSE;
-        color_blend.attachmentCount = 1;
-        color_blend.pAttachments = &color_blend_attach;
-
-        VkDynamicState dyn_states[] = {VK_DYNAMIC_STATE_VIEWPORT,
-                                       VK_DYNAMIC_STATE_SCISSOR};
-
-        VkPipelineDynamicStateCreateInfo dyn_state_info = {0};
-        dyn_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-        dyn_state_info.dynamicStateCount = sizeof(dyn_states) / sizeof(dyn_states[0]);
-        dyn_state_info.pDynamicStates = dyn_states;
-
-        VkGraphicsPipelineCreateInfo pipeline_info = {0};
-        pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-        pipeline_info.stageCount = sizeof(shaders) / sizeof(shaders[0]);
-        pipeline_info.pStages = shaders;
-        pipeline_info.pVertexInputState = &input_info;
-        pipeline_info.pInputAssemblyState = &input_assembly;
-        pipeline_info.pRasterizationState = &rasterizer;
-        pipeline_info.pViewportState = &viewport_state;
-        pipeline_info.pDepthStencilState = &depth_state;
-        pipeline_info.pMultisampleState = &multisampling;
-        pipeline_info.pColorBlendState = &color_blend;
-        pipeline_info.pDynamicState = &dyn_state_info;
-        pipeline_info.layout = pipeline_lt;
-        pipeline_info.renderPass = rpass;
-        pipeline_info.subpass = 0;
-
-        VkPipeline pipeline;
-        res = vkCreateGraphicsPipelines(base.device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &pipeline);
-        assert(res == VK_SUCCESS);
+	VkPipeline pipeline;
+	pipeline_create(base.device, &pipeline_settings,
+	                sizeof(shaders) / sizeof(shaders[0]), shaders, &vertex_info,
+	                pipeline_lt, rpass, 0, &pipeline);
 
 	// Depth buffers
 	struct Image* depth_images = malloc(swapchain.image_ct * sizeof(depth_images[0]));
