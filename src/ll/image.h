@@ -94,5 +94,32 @@ void image_destroy(VkDevice device, struct Image* image) {
 	vkDestroyImageView(device, image->view, NULL);
 }
 
+void image_trans(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImage image, VkImageAspectFlags aspect,
+                 VkImageLayout old_lt, VkImageLayout new_lt, VkAccessFlags src_access, VkAccessFlags dst_access,
+                 VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage)
+{
+	VkImageMemoryBarrier barrier = {0};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = old_lt;
+	barrier.newLayout = new_lt;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = image;
+	barrier.subresourceRange.aspectMask = aspect;
+	barrier.subresourceRange.baseMipLevel = 0;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.srcAccessMask = src_access;
+	barrier.dstAccessMask = dst_access;
+
+	VkCommandBuffer cbuf;
+	cbuf_alloc(device, cpool, &cbuf);
+	cbuf_begin_onetime(cbuf);
+	vkCmdPipelineBarrier(cbuf, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
+	cbuf_submit_wait(queue, cbuf);
+	vkFreeCommandBuffers(device, cpool, 1, &cbuf);
+}
+
 #endif // LL_IMAGE_H
 

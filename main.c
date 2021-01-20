@@ -7,6 +7,8 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "src/utils/obj.h"
+
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
 #include "src/ll/image.h"
@@ -43,19 +45,6 @@ struct Vertex {
         vec3 pos;
         vec2 tex_c;
 };
-
-const struct Vertex VERTICES[] = {{{-0.8F, 0.5F, 0.8F}, {0.0F, 0.0F}},
-                                   {{0.8F, 0.5F, 0.8F}, {1.0F, 0.0F}},
-                                   {{-0.8F, 0.5F, -0.8F}, {0.0F, 1.0F}},
-                                   {{0.8F, 0.5F, -0.8F}, {1.0F, 1.0F}},
-
-                                   {{-0.8F, -0.5F, 0.8F}, {0.0F, 0.0F}},
-                                   {{0.8F, -0.5F, 0.8F}, {1.0F, 0.0F}},
-                                   {{-0.8F, -0.5F, -0.8F}, {0.0F, 1.0F}},
-                                   {{0.8F, -0.5F, -0.8F}, {1.0F, 1.0F}}};
-const uint32_t VERTEX_CT = sizeof(VERTICES) / sizeof(VERTICES[0]);
-const uint16_t INDICES[] = {0, 1, 3, 0, 3, 2, 4, 5, 7, 4, 7, 6};
-const uint32_t INDEX_CT = sizeof(INDICES) / sizeof(INDICES[0]);
 
 struct Uniform {
         mat4 model;
@@ -106,33 +95,6 @@ void depth_create(VkPhysicalDevice phys_dev, VkDevice device,
 	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, image);
 }
 
-void image_trans(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImage image, VkImageAspectFlags aspect,
-                 VkImageLayout old_lt, VkImageLayout new_lt, VkAccessFlags src_access, VkAccessFlags dst_access,
-                 VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage)
- {
-	VkImageMemoryBarrier barrier = {0};
-	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-	barrier.oldLayout = old_lt;
-	barrier.newLayout = new_lt;
-	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-	barrier.image = image;
-	barrier.subresourceRange.aspectMask = aspect;
-	barrier.subresourceRange.baseMipLevel = 0;
-	barrier.subresourceRange.levelCount = 1;
-	barrier.subresourceRange.baseArrayLayer = 0;
-	barrier.subresourceRange.layerCount = 1;
-	barrier.srcAccessMask = src_access;
-	barrier.dstAccessMask = dst_access;
-
-	VkCommandBuffer cbuf;
-	cbuf_alloc(device, cpool, &cbuf);
-	cbuf_begin_onetime(cbuf);
-	vkCmdPipelineBarrier(cbuf, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
-	cbuf_submit_wait(queue, cbuf);
-	vkFreeCommandBuffers(device, cpool, 1, &cbuf);
-}
-
 int main() {
         // GLFW
         glfwInit();
@@ -153,12 +115,35 @@ int main() {
         VkResult res = vkCreateCommandPool(base.device, &cpool_info, NULL, &cpool);
         assert(res == VK_SUCCESS);
 
+        // Load model
+        int vertex_ct, index_ct;
+        struct ObjVertex* raw_vertices;
+        int* raw_indices;
+	obj_load("assets/models/dragon2.obj", &vertex_ct, &raw_vertices, &index_ct, &raw_indices);
+
+	struct Vertex* vertices = malloc(vertex_ct * sizeof(vertices[0]));
+	for (int i = 0; i < vertex_ct; ++i) {
+        	vertices[i].pos[0] = raw_vertices[i].pos[0];
+        	vertices[i].pos[1] = raw_vertices[i].pos[1];
+        	vertices[i].pos[2] = raw_vertices[i].pos[2];
+        	vertices[i].tex_c[0] = raw_vertices[i].normal[0];
+        	vertices[i].tex_c[1] = raw_vertices[i].normal[1];
+	};
+	free(raw_vertices);
+
+	uint32_t* indices = malloc(index_ct * sizeof(indices[0]));
+	for (int i = 0; i < index_ct; ++i) indices[i] = raw_indices[i];
+	free(raw_indices);
+
         // Meshes
         struct Buffer vbuf, ibuf;
         buffer_staged(base.phys_dev, base.device, base.queue, cpool, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(VERTICES), VERTICES, &vbuf);
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_ct * sizeof(vertices[0]), vertices, &vbuf);
         buffer_staged(base.phys_dev, base.device, base.queue, cpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, sizeof(INDICES), INDICES, &ibuf);
+                      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, index_ct * sizeof(indices[0]), indices, &ibuf);
+
+        free(vertices);
+        free(indices);
 
         // Load texture
         int tex_width, tex_height;
@@ -620,7 +605,7 @@ int main() {
 
                 VkDeviceSize vbuf_offset = 0;
                 vkCmdBindVertexBuffers(rproc->cbuf, 0, 1, &vbuf.handle, &vbuf_offset);
-                vkCmdBindIndexBuffer(rproc->cbuf, ibuf.handle, 0, VK_INDEX_TYPE_UINT16);
+                vkCmdBindIndexBuffer(rproc->cbuf, ibuf.handle, 0, VK_INDEX_TYPE_UINT32);
 
                 VkViewport viewport = {0};
                 viewport.width = swapchain.width;
@@ -636,7 +621,7 @@ int main() {
 
                 vkCmdBindDescriptorSets(rproc->cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
                                         0, 1, &sets[rproc_idx], 0, NULL);
-                vkCmdDrawIndexed(rproc->cbuf, INDEX_CT, 1, 0, 0, 0);
+                vkCmdDrawIndexed(rproc->cbuf, index_ct, 1, 0, 0, 0);
                 vkCmdEndRenderPass(rproc->cbuf);
 
                 res = vkEndCommandBuffer(rproc->cbuf);
