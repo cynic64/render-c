@@ -689,4 +689,7 @@ int main() {
 
         glfwDestroyWindow(window);
         glfwTerminate();
+
+	free(fbs);
+	free(image_fences);
 }
