@@ -18,6 +18,7 @@ struct Base {
 	uint32_t queue_fam;
 	VkDevice device;
 	VkQueue queue;
+	VkCommandPool cpool;
 };
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -202,10 +203,21 @@ void base_create(GLFWwindow* window,
 
         // Create queue
         vkGetDeviceQueue(base->device, base->queue_fam, 0, &base->queue);
+
+        // Create command pool
+        VkCommandPoolCreateInfo cpool_info = {0};
+        cpool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        cpool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        cpool_info.queueFamilyIndex = base->queue_fam;
+
+        res = vkCreateCommandPool(base->device, &cpool_info, NULL, &base->cpool);
+        assert(res == VK_SUCCESS);
 }
 
 void base_destroy(struct Base* base) {
 	vkDeviceWaitIdle(base->device);
+
+        vkDestroyCommandPool(base->device, base->cpool, NULL);
 
         vkDestroyDevice(base->device, NULL);
 

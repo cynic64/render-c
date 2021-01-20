@@ -34,7 +34,7 @@ const int DEVICE_EXT_CT = 1;
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 
-const int RENDER_PROCESSES = 4;
+#define RENDER_PROCESSES 4
 
 #ifndef NDEBUG
         const int VALIDATION_ON = 1;
@@ -106,16 +106,6 @@ int main() {
         struct Base base;
         base_create(window, VALIDATION_ON, INSTANCE_EXT_CT, INSTANCE_EXTS, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
-        // Command pool
-        VkCommandPoolCreateInfo cpool_info = {0};
-        cpool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-        cpool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
-        cpool_info.queueFamilyIndex = base.queue_fam;
-
-        VkCommandPool cpool;
-        VkResult res = vkCreateCommandPool(base.device, &cpool_info, NULL, &cpool);
-        assert(res == VK_SUCCESS);
-
         // Load model
         fastObjMesh* mesh = fast_obj_read("assets/models/dragon.obj");
 
@@ -141,9 +131,9 @@ int main() {
 
         // Meshes
         struct Buffer vbuf, ibuf;
-        buffer_staged(base.phys_dev, base.device, base.queue, cpool, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        buffer_staged(base.phys_dev, base.device, base.queue, base.cpool, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_ct * sizeof(vertices[0]), vertices, &vbuf);
-        buffer_staged(base.phys_dev, base.device, base.queue, cpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        buffer_staged(base.phys_dev, base.device, base.queue, base.cpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, index_ct * sizeof(indices[0]), indices, &ibuf);
 
         free(vertices);
@@ -171,15 +161,15 @@ int main() {
 		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &tex);
 
 	// Copy to texture
-	image_trans(base.device, base.queue, cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
+	image_trans(base.device, base.queue, base.cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
 	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
 	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-	image_copy_from_buffer(base.device, base.queue, cpool, VK_IMAGE_ASPECT_COLOR_BIT,
+	image_copy_from_buffer(base.device, base.queue, base.cpool, VK_IMAGE_ASPECT_COLOR_BIT,
 	                       tex_buf.handle, tex.handle, tex_width, tex_height);
 
-	image_trans(base.device, base.queue, cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
+	image_trans(base.device, base.queue, base.cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
 	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
 	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
@@ -203,7 +193,7 @@ int main() {
 	sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 
 	VkSampler tex_sampler;
-	res = vkCreateSampler(base.device, &sampler_info, NULL, &tex_sampler);
+	VkResult res = vkCreateSampler(base.device, &sampler_info, NULL, &tex_sampler);
 	assert(res == VK_SUCCESS);
 
         // Swapchain
@@ -420,7 +410,7 @@ int main() {
 
         // Render processes
         struct RenderProc rprocs[RENDER_PROCESSES];
-        for (int i = 0; i < RENDER_PROCESSES; ++i) render_proc_create(base.device, cpool, &rprocs[i]);
+        for (int i = 0; i < RENDER_PROCESSES; ++i) render_proc_create(base.device, base.cpool, &rprocs[i]);
 
         // Uniform buffers (one for every render process)
         struct Buffer ubufs[RENDER_PROCESSES];
@@ -652,7 +642,6 @@ int main() {
 
         vkDestroyPipelineLayout(base.device, pipeline_lt, NULL);
 
-        vkDestroyCommandPool(base.device, cpool, NULL);
         vkDestroyRenderPass(base.device, rpass, NULL);
 
         vkDestroyShaderModule(base.device, vs, NULL);
