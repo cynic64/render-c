@@ -12,7 +12,6 @@
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
 #include "src/ll/image.h"
-#include "src/ll/render_proc.h"
 #include "src/ll/set.h"
 #include "src/ll/shader.h"
 #include "src/ll/swapchain.h"
@@ -34,7 +33,7 @@ const int DEVICE_EXT_CT = 1;
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 
-#define RENDER_PROCESSES 4
+#define CONCURRENT_FRAMES 4
 
 #ifndef NDEBUG
         const int VALIDATION_ON = 1;
@@ -52,6 +51,24 @@ struct Uniform {
         mat4 view;
         mat4 proj;
 };
+
+struct SyncSet {
+        VkFence render_fence;
+        VkSemaphore acquire_sem;
+        VkSemaphore render_sem;
+};
+
+void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
+        fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
+        semaphore_create(device, &sync_set->acquire_sem);
+        semaphore_create(device, &sync_set->render_sem);
+}
+
+void sync_set_destroy(VkDevice device, struct SyncSet* sync_set) {
+	vkDestroyFence(device, sync_set->render_fence, NULL);
+	vkDestroySemaphore(device, sync_set->acquire_sem, NULL);
+	vkDestroySemaphore(device, sync_set->render_sem, NULL);
+}
 
 // Memory must be preallocated
 void fbs_create(VkDevice device, VkRenderPass rpass, uint32_t width, uint32_t height,
@@ -272,16 +289,10 @@ int main() {
         VkSubpassDependency subpass_dep = {0};
         subpass_dep.srcSubpass = VK_SUBPASS_EXTERNAL;
         subpass_dep.dstSubpass = 0;
-        subpass_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                                 | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-                                 | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        subpass_dep.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        subpass_dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
-                                 | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
-                                 | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
-        subpass_dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
-                                  | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT
-                                  | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        subpass_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        subpass_dep.srcAccessMask = 0;
+        subpass_dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        subpass_dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
         VkRenderPassCreateInfo rpass_info = {0};
         rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -297,30 +308,30 @@ int main() {
         assert(res == VK_SUCCESS);
 
         // Descriptor set layout
-       	VkDescriptorSetLayoutBinding desc_lt_binds[2] = {0};
-        desc_lt_binds[0].binding = 0;
-        desc_lt_binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        desc_lt_binds[0].descriptorCount = 1;
-        desc_lt_binds[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+       	VkDescriptorSetLayoutBinding descriptors[2] = {0};
+        descriptors[0].binding = 0;
+        descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptors[0].descriptorCount = 1;
+        descriptors[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 
-        desc_lt_binds[1].binding = 1;
-        desc_lt_binds[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        desc_lt_binds[1].descriptorCount = 1;
-        desc_lt_binds[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        descriptors[1].binding = 1;
+        descriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptors[1].descriptorCount = 1;
+        descriptors[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-        VkDescriptorSetLayoutCreateInfo desc_lt_info = {0};
-        desc_lt_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        desc_lt_info.bindingCount = sizeof(desc_lt_binds) / sizeof(desc_lt_binds[0]);
-        desc_lt_info.pBindings = desc_lt_binds;
+        VkDescriptorSetLayoutCreateInfo set_layout_info = {0};
+        set_layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        set_layout_info.bindingCount = sizeof(descriptors) / sizeof(descriptors[0]);
+        set_layout_info.pBindings = descriptors;
 
-        VkDescriptorSetLayout desc_lt = {0};
-        res = vkCreateDescriptorSetLayout(base.device, &desc_lt_info, NULL, &desc_lt);
+        VkDescriptorSetLayout set_layout = {0};
+        res = vkCreateDescriptorSetLayout(base.device, &set_layout_info, NULL, &set_layout);
 
         // Pipeline layout
         VkPipelineLayoutCreateInfo pipeline_lt_info = {0};
         pipeline_lt_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipeline_lt_info.setLayoutCount = 1;
-        pipeline_lt_info.pSetLayouts = &desc_lt;
+        pipeline_lt_info.pSetLayouts = &set_layout;
 
         VkPipelineLayout pipeline_lt;
         res = vkCreatePipelineLayout(base.device, &pipeline_lt_info, NULL, &pipeline_lt);
@@ -408,13 +419,17 @@ int main() {
         fbs_create(base.device, rpass, swapchain.width, swapchain.height,
                    swapchain.image_ct, swapchain.views, depth_img.view, fbs);
 
-        // Render processes
-        struct RenderProc rprocs[RENDER_PROCESSES];
-        for (int i = 0; i < RENDER_PROCESSES; ++i) render_proc_create(base.device, base.cpool, &rprocs[i]);
+        // Command buffers
+        VkCommandBuffer cbufs[CONCURRENT_FRAMES];
+        for (int i = 0; i < CONCURRENT_FRAMES; ++i) cbuf_alloc(base.device, base.cpool, &cbufs[i]);
+
+        // Sync sets
+        struct SyncSet sync_sets [CONCURRENT_FRAMES];
+        for (int i = 0; i < CONCURRENT_FRAMES; ++i) sync_set_create(base.device, &sync_sets[i]);
 
         // Uniform buffers (one for every render process)
-        struct Buffer ubufs[RENDER_PROCESSES];
-        for (int i = 0; i < RENDER_PROCESSES; ++i) {
+        struct Buffer ubufs[CONCURRENT_FRAMES];
+        for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
                 buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                               sizeof(struct Uniform), &ubufs[i]);
@@ -423,23 +438,23 @@ int main() {
         // Descriptor pool
         VkDescriptorPoolSize dpool_sizes[2] = {0};
         dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        dpool_sizes[0].descriptorCount = RENDER_PROCESSES;
+        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES;
         dpool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        dpool_sizes[1].descriptorCount = RENDER_PROCESSES;
+        dpool_sizes[1].descriptorCount = CONCURRENT_FRAMES;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
         dpool_info.pPoolSizes = dpool_sizes;
-        dpool_info.maxSets = RENDER_PROCESSES;
+        dpool_info.maxSets = CONCURRENT_FRAMES;
 
         VkDescriptorPool dpool;
         res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
         assert(res == VK_SUCCESS);
 
         // Sets
-        VkDescriptorSet sets[RENDER_PROCESSES];
-        for (int i = 0; i < RENDER_PROCESSES; ++i) {
+        VkDescriptorSet sets[CONCURRENT_FRAMES];
+        for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
                 struct Descriptor descriptors[2] = {0};
                 descriptors[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
                 descriptors[0].binding = 0;
@@ -454,11 +469,11 @@ int main() {
                 descriptors[1].image.imageView = tex.view;
                 descriptors[1].image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-                set_create(base.device, dpool, desc_lt,
+                set_create(base.device, dpool, set_layout,
                            sizeof(descriptors) / sizeof(descriptors[0]), descriptors, &sets[i]);
         }
 
-        vkDestroyDescriptorSetLayout(base.device, desc_lt, NULL);
+        vkDestroyDescriptorSetLayout(base.device, set_layout, NULL);
 
         // Image fences
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
@@ -493,9 +508,9 @@ int main() {
                         fbs_create(base.device, rpass, swapchain.width, swapchain.height,
                                    swapchain.image_ct, swapchain.views, depth_img.view, fbs);
 
-                        for (int i = 0; i < RENDER_PROCESSES; ++i) {
-                                render_proc_destroy_sync(base.device, &rprocs[i]);
-                                render_proc_create_sync(base.device, &rprocs[i]);
+                        for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
+                                sync_set_destroy(base.device, &sync_sets[i]);
+                                sync_set_create(base.device, &sync_sets[i]);
                         }
 
                         for (int i = 0; i < swapchain.image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
@@ -505,8 +520,10 @@ int main() {
                         if (real_width != swapchain.width || real_height != swapchain.height) must_recreate = 1;
                 }
 
-                int rproc_idx = frame_ct % RENDER_PROCESSES;
-                struct RenderProc* const rproc = &rprocs[rproc_idx];
+                int frame_idx = frame_ct % CONCURRENT_FRAMES;
+                struct SyncSet* sync_set = &sync_sets[frame_idx];
+
+                VkCommandBuffer cbuf = cbufs[frame_idx];
 
                 // Write to ubuf
                 struct timespec time;
@@ -519,20 +536,20 @@ int main() {
                 glm_mat4_identity(uni_data.model);
                 glm_lookat(eye, (vec3){0.0F, 0.0F, 0.0F}, (vec3){0.0F, -1.0F, 0.0F}, uni_data.view);
                 glm_perspective(1.0F, (float) swapchain.width / (float) swapchain.height, 0.1F, 10.0F, uni_data.proj);
-                struct Buffer* ubuf = &ubufs[rproc_idx];
+                struct Buffer* ubuf = &ubufs[frame_idx];
                 mem_write(base.device, ubuf->mem, sizeof(uni_data), &uni_data);
 
                 // Wait for the render process using these sync objects to finish rendering
-                res = vkWaitForFences(base.device, 1, &rproc->fence, VK_TRUE, UINT64_MAX);
+                res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
                 assert(res == VK_SUCCESS);
 
                 // Reset command buffer
-                vkResetCommandBuffer(rproc->cbuf, 0);
+                vkResetCommandBuffer(cbuf, 0);
 
                 // Acquire an image
                 uint32_t image_idx;
                 res = vkAcquireNextImageKHR(base.device, swapchain.handle, UINT64_MAX,
-                                            rproc->acquire_sem, VK_NULL_HANDLE, &image_idx);
+                                            sync_set->acquire_sem, VK_NULL_HANDLE, &image_idx);
                 if (res == VK_ERROR_OUT_OF_DATE_KHR) {
                         must_recreate = 1;
                         continue;
@@ -542,7 +559,7 @@ int main() {
                 VkCommandBufferBeginInfo cbuf_begin_info = {0};
                 cbuf_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
                 cbuf_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-                vkBeginCommandBuffer(rproc->cbuf, &cbuf_begin_info);
+                vkBeginCommandBuffer(cbuf, &cbuf_begin_info);
 
                 VkClearValue clear_vals[2] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
                                               {{{1.0F, 0.0F}}}};
@@ -555,32 +572,32 @@ int main() {
                 cbuf_rpass_info.renderArea.extent.height = swapchain.height;
                 cbuf_rpass_info.clearValueCount = sizeof(clear_vals) / sizeof(clear_vals[0]);
                 cbuf_rpass_info.pClearValues = clear_vals;
-                vkCmdBeginRenderPass(rproc->cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
+                vkCmdBeginRenderPass(cbuf, &cbuf_rpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
-                vkCmdBindPipeline(rproc->cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                vkCmdBindPipeline(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
                 VkDeviceSize vbuf_offset = 0;
-                vkCmdBindVertexBuffers(rproc->cbuf, 0, 1, &vbuf.handle, &vbuf_offset);
-                vkCmdBindIndexBuffer(rproc->cbuf, ibuf.handle, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdBindVertexBuffers(cbuf, 0, 1, &vbuf.handle, &vbuf_offset);
+                vkCmdBindIndexBuffer(cbuf, ibuf.handle, 0, VK_INDEX_TYPE_UINT32);
 
                 VkViewport viewport = {0};
                 viewport.width = swapchain.width;
                 viewport.height = swapchain.height;
                 viewport.minDepth = 0.0F;
                 viewport.maxDepth = 1.0F;
-                vkCmdSetViewport(rproc->cbuf, 0, 1, &viewport);
+                vkCmdSetViewport(cbuf, 0, 1, &viewport);
 
                 VkRect2D scissor = {0};
                 scissor.extent.width = swapchain.width;
                 scissor.extent.height = swapchain.height;
-                vkCmdSetScissor(rproc->cbuf, 0, 1, &scissor);
+                vkCmdSetScissor(cbuf, 0, 1, &scissor);
 
-                vkCmdBindDescriptorSets(rproc->cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
-                                        0, 1, &sets[rproc_idx], 0, NULL);
-                vkCmdDrawIndexed(rproc->cbuf, index_ct, 1, 0, 0, 0);
-                vkCmdEndRenderPass(rproc->cbuf);
+                vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
+                                        0, 1, &sets[frame_idx], 0, NULL);
+                vkCmdDrawIndexed(cbuf, index_ct, 1, 0, 0, 0);
+                vkCmdEndRenderPass(cbuf);
 
-                res = vkEndCommandBuffer(rproc->cbuf);
+                res = vkEndCommandBuffer(cbuf);
                 assert(res == VK_SUCCESS);
 
                 // Wait until whoever is rendering to the image is done
@@ -588,32 +605,32 @@ int main() {
                         vkWaitForFences(base.device, 1, &image_fences[image_idx], VK_TRUE, UINT64_MAX);
 
                 // Reset fence
-                res = vkResetFences(base.device, 1, &rproc->fence);
+                res = vkResetFences(base.device, 1, &sync_set->render_fence);
                 assert(res == VK_SUCCESS);
 
                 // Mark it as in use by us
-                image_fences[image_idx] = rproc->fence;
+                image_fences[image_idx] = sync_set->render_fence;
 
                 // Submit
                 VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
                 VkSubmitInfo submit_info = {0};
                 submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
                 submit_info.waitSemaphoreCount = 1;
-                submit_info.pWaitSemaphores = &rproc->acquire_sem;
+                submit_info.pWaitSemaphores = &sync_set->acquire_sem;
                 submit_info.pWaitDstStageMask = &wait_stage;
                 submit_info.commandBufferCount = 1;
-                submit_info.pCommandBuffers = &rproc->cbuf;
+                submit_info.pCommandBuffers = &cbuf;
                 submit_info.signalSemaphoreCount = 1;
-                submit_info.pSignalSemaphores = &rproc->render_sem;
+                submit_info.pSignalSemaphores = &sync_set->render_sem;
 
-                res = vkQueueSubmit(base.queue, 1, &submit_info, rproc->fence);
+                res = vkQueueSubmit(base.queue, 1, &submit_info, sync_set->render_fence);
                 assert(res == VK_SUCCESS);
 
                 // Present
                 VkPresentInfoKHR present_info = {0};
                 present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
                 present_info.waitSemaphoreCount = 1;
-                present_info.pWaitSemaphores = &rproc->render_sem;
+                present_info.pWaitSemaphores = &sync_set->render_sem;
                 present_info.swapchainCount = 1;
                 present_info.pSwapchains = &swapchain.handle;
                 present_info.pImageIndices = &image_idx;
@@ -636,7 +653,7 @@ int main() {
         // Cleanup
         vkDeviceWaitIdle(base.device);
 
-        for (int i = 0; i < RENDER_PROCESSES; ++i) render_proc_destroy_sync(base.device, &rprocs[i]);
+        for (int i = 0; i < CONCURRENT_FRAMES; ++i) sync_set_destroy(base.device, &sync_sets[i]);
 
         vkDestroyPipeline(base.device, pipeline, NULL);
 
@@ -659,7 +676,7 @@ int main() {
         buffer_destroy(base.device, &vbuf);
         buffer_destroy(base.device, &ibuf);
 
-        for (int i = 0; i < RENDER_PROCESSES; ++i) buffer_destroy(base.device, &ubufs[i]);
+        for (int i = 0; i < CONCURRENT_FRAMES; ++i) buffer_destroy(base.device, &ubufs[i]);
 
         vkDestroyDescriptorPool(base.device, dpool, NULL);
 
