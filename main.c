@@ -3,11 +3,11 @@
 #define STBI_FAILURE_USERMSG
 #define STB_IMAGE_IMPLEMENTATION
 #include "external/stb_image/stb_image.h"
+#define FAST_OBJ_IMPLEMENTATION
+#include "external/fast_obj/fast_obj.h"
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
-
-#include "src/utils/obj.h"
 
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
@@ -116,24 +116,27 @@ int main() {
         assert(res == VK_SUCCESS);
 
         // Load model
-        int vertex_ct, index_ct;
-        struct ObjVertex* raw_vertices;
-        int* raw_indices;
-	obj_load("assets/models/dragon2.obj", &vertex_ct, &raw_vertices, &index_ct, &raw_indices);
+        fastObjMesh* mesh = fast_obj_read("assets/models/dragon.obj");
 
+	uint32_t vertex_ct = mesh->face_count * 3;
 	struct Vertex* vertices = malloc(vertex_ct * sizeof(vertices[0]));
-	for (int i = 0; i < vertex_ct; ++i) {
-        	vertices[i].pos[0] = raw_vertices[i].pos[0];
-        	vertices[i].pos[1] = raw_vertices[i].pos[1];
-        	vertices[i].pos[2] = raw_vertices[i].pos[2];
-        	vertices[i].tex_c[0] = raw_vertices[i].normal[0];
-        	vertices[i].tex_c[1] = raw_vertices[i].normal[1];
-	};
-	free(raw_vertices);
 
+	uint32_t index_ct = mesh->face_count * 3;
 	uint32_t* indices = malloc(index_ct * sizeof(indices[0]));
-	for (int i = 0; i < index_ct; ++i) indices[i] = raw_indices[i];
-	free(raw_indices);
+	for (int i = 0; i < mesh->face_count; ++i) {
+        	for (int j = 0; j < 3; ++j) {
+                	uint32_t v_idx = mesh->indices[3*i+j].p;
+                	uint32_t n_idx = mesh->indices[3*i+j].n;
+                	indices[3*i+j] = v_idx;
+                	vertices[v_idx].pos[0] = mesh->positions[3*v_idx+0];
+                	vertices[v_idx].pos[1] = mesh->positions[3*v_idx+1];
+                	vertices[v_idx].pos[2] = mesh->positions[3*v_idx+2];
+                	vertices[v_idx].tex_c[0] = mesh->normals[3*n_idx+2];
+                	vertices[v_idx].tex_c[1] = mesh->normals[3*n_idx+2];
+        	}
+	}
+
+	fast_obj_destroy(mesh);
 
         // Meshes
         struct Buffer vbuf, ibuf;
