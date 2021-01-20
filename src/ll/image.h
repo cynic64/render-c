@@ -3,6 +3,8 @@
 
 #include <vulkan/vulkan.h>
 
+#include "cbuf.h"
+
 #include <assert.h>
 
 struct Image {
@@ -117,6 +119,25 @@ void image_trans(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImage im
 	cbuf_alloc(device, cpool, &cbuf);
 	cbuf_begin_onetime(cbuf);
 	vkCmdPipelineBarrier(cbuf, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
+	cbuf_submit_wait(queue, cbuf);
+	vkFreeCommandBuffers(device, cpool, 1, &cbuf);
+}
+
+// Assumes image is already VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+void image_copy_from_buffer(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImageAspectFlags aspect,
+                            VkBuffer src, VkImage dst, uint32_t width, uint32_t height)
+{
+	VkBufferImageCopy region = {0};
+	region.imageSubresource.aspectMask = aspect;
+	region.imageSubresource.mipLevel = 0;
+	region.imageSubresource.baseArrayLayer = 0;
+	region.imageSubresource.layerCount = 1;
+	region.imageExtent = (VkExtent3D){width, height, 1};
+
+	VkCommandBuffer cbuf;
+	cbuf_alloc(device, cpool, &cbuf);
+	cbuf_begin_onetime(cbuf);
+	vkCmdCopyBufferToImage(cbuf, src, dst, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 	cbuf_submit_wait(queue, cbuf);
 	vkFreeCommandBuffers(device, cpool, 1, &cbuf);
 }

@@ -176,19 +176,8 @@ int main() {
 	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
 	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-	VkBufferImageCopy copy_region = {0};
-	copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-	copy_region.imageSubresource.mipLevel = 0;
-	copy_region.imageSubresource.baseArrayLayer = 0;
-	copy_region.imageSubresource.layerCount = 1;
-	copy_region.imageExtent = (VkExtent3D){tex_width, tex_height, 1};
-
-	VkCommandBuffer copy_cbuf;
-	cbuf_alloc(base.device, cpool, &copy_cbuf);
-	cbuf_begin_onetime(copy_cbuf);
-	vkCmdCopyBufferToImage(copy_cbuf, tex_buf.handle, tex.handle, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy_region);
-	cbuf_submit_wait(base.queue, copy_cbuf);
-	vkFreeCommandBuffers(base.device, cpool, 1, &copy_cbuf);
+	image_copy_from_buffer(base.device, base.queue, cpool, VK_IMAGE_ASPECT_COLOR_BIT,
+	                       tex_buf.handle, tex.handle, tex_width, tex_height);
 
 	image_trans(base.device, base.queue, cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
 	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
