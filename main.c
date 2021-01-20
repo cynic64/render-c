@@ -32,6 +32,7 @@ const char* DEVICE_EXTS[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 const int DEVICE_EXT_CT = 1;
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
+const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
 #define CONCURRENT_FRAMES 4
 
@@ -72,12 +73,13 @@ void sync_set_destroy(VkDevice device, struct SyncSet* sync_set) {
 
 // Memory must be preallocated
 void fbs_create(VkDevice device, VkRenderPass rpass, uint32_t width, uint32_t height,
-                uint32_t view_ct, VkImageView* views, VkImageView depth, VkFramebuffer* fbs)
+                uint32_t view_ct, const VkImageView* swapchain_views, const VkImageView* depth_views,
+                VkFramebuffer* fbs)
 {
         for (int i = 0; i < view_ct; ++i) {
                 VkImageView attachments[2];
-                attachments[0] = views[i];
-                attachments[1] = depth;
+                attachments[0] = swapchain_views[i];
+                attachments[1] = depth_views[i];
 
                 VkFramebufferCreateInfo info = {0};
                 info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -217,11 +219,6 @@ int main() {
         struct Swapchain swapchain;
         swapchain_create(base.surface, base.phys_dev, base.device, SC_FORMAT_PREF, SC_PRESENT_MODE_PREF, &swapchain);
 
-	// Depth buffer
-	const VkFormat depth_fmt = VK_FORMAT_D32_SFLOAT;
-	struct Image depth_img;
-	depth_create(base.phys_dev, base.device, depth_fmt, swapchain.width, swapchain.height, &depth_img);
-
         // Vertex input
         VkVertexInputBindingDescription vtx_bind_desc = {0};
         vtx_bind_desc.binding = 0;
@@ -263,7 +260,7 @@ int main() {
         attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-        attachments[1].format = depth_fmt;
+        attachments[1].format = DEPTH_FORMAT;
         attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
         attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -414,10 +411,18 @@ int main() {
         res = vkCreateGraphicsPipelines(base.device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &pipeline);
         assert(res == VK_SUCCESS);
 
+	// Depth buffers
+	struct Image* depth_images = malloc(swapchain.image_ct * sizeof(depth_images[0]));
+	VkImageView* depth_views = malloc(swapchain.image_ct * sizeof(depth_views[0]));
+	for (int i = 0; i < swapchain.image_ct; ++i) {
+        	depth_create(base.phys_dev, base.device, DEPTH_FORMAT, swapchain.width, swapchain.height, &depth_images[i]);
+        	depth_views[i] = depth_images[i].view;
+	};
+
         // Framebuffers
         VkFramebuffer* fbs = malloc(swapchain.image_ct * sizeof(fbs[0]));
         fbs_create(base.device, rpass, swapchain.width, swapchain.height,
-                   swapchain.image_ct, swapchain.views, depth_img.view, fbs);
+                   swapchain.image_ct, swapchain.views, depth_views, fbs);
 
         // Command buffers
         VkCommandBuffer cbufs[CONCURRENT_FRAMES];
@@ -501,17 +506,20 @@ int main() {
 
                         assert(swapchain.format == old_format && swapchain.image_ct == old_image_ct);
 
-                        image_destroy(base.device, &depth_img);
-                        depth_create(base.phys_dev, base.device, depth_fmt,
-                                     swapchain.width, swapchain.height, &depth_img);
-
-                        fbs_create(base.device, rpass, swapchain.width, swapchain.height,
-                                   swapchain.image_ct, swapchain.views, depth_img.view, fbs);
-
                         for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
                                 sync_set_destroy(base.device, &sync_sets[i]);
                                 sync_set_create(base.device, &sync_sets[i]);
                         }
+
+                        for (int i = 0; i < swapchain.image_ct; ++i) {
+                                image_destroy(base.device, &depth_images[i]);
+                                depth_create(base.phys_dev, base.device, DEPTH_FORMAT,
+                                             swapchain.width, swapchain.height, &depth_images[i]);
+                                depth_views[i] = depth_images[i].view;
+                        }
+
+                        fbs_create(base.device, rpass, swapchain.width, swapchain.height,
+                                   swapchain.image_ct, swapchain.views, depth_views, fbs);
 
                         for (int i = 0; i < swapchain.image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
 
@@ -653,8 +661,6 @@ int main() {
         // Cleanup
         vkDeviceWaitIdle(base.device);
 
-        for (int i = 0; i < CONCURRENT_FRAMES; ++i) sync_set_destroy(base.device, &sync_sets[i]);
-
         vkDestroyPipeline(base.device, pipeline, NULL);
 
         vkDestroyPipelineLayout(base.device, pipeline_lt, NULL);
@@ -671,12 +677,17 @@ int main() {
 	vkDestroySampler(base.device, tex_sampler, NULL);
         buffer_destroy(base.device, &tex_buf);
 
-        image_destroy(base.device, &depth_img);
-
         buffer_destroy(base.device, &vbuf);
         buffer_destroy(base.device, &ibuf);
 
-        for (int i = 0; i < CONCURRENT_FRAMES; ++i) buffer_destroy(base.device, &ubufs[i]);
+        for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
+                sync_set_destroy(base.device, &sync_sets[i]);
+                buffer_destroy(base.device, &ubufs[i]);
+        }
+
+        for (int i = 0; i < swapchain.image_ct; ++i) {
+                image_destroy(base.device, &depth_images[i]);
+        }
 
         vkDestroyDescriptorPool(base.device, dpool, NULL);
 
@@ -687,4 +698,6 @@ int main() {
 
 	free(fbs);
 	free(image_fences);
+	free(depth_images);
+	free(depth_views);
 }
