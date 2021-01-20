@@ -13,6 +13,7 @@
 #include "src/ll/buffer.h"
 #include "src/ll/image.h"
 #include "src/ll/render_proc.h"
+#include "src/ll/set.h"
 #include "src/ll/shader.h"
 #include "src/ll/swapchain.h"
 #include "src/ll/sync.h"
@@ -316,7 +317,7 @@ int main() {
         res = vkCreateRenderPass(base.device, &rpass_info, NULL, &rpass);
         assert(res == VK_SUCCESS);
 
-        // Descriptor set layouts
+        // Descriptor set layout
        	VkDescriptorSetLayoutBinding desc_lt_binds[2] = {0};
         desc_lt_binds[0].binding = 0;
         desc_lt_binds[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -335,7 +336,6 @@ int main() {
 
         VkDescriptorSetLayout desc_lt = {0};
         res = vkCreateDescriptorSetLayout(base.device, &desc_lt_info, NULL, &desc_lt);
-        assert(res == VK_SUCCESS);
 
         // Pipeline layout
         VkPipelineLayoutCreateInfo pipeline_lt_info = {0};
@@ -459,50 +459,25 @@ int main() {
         res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
         assert(res == VK_SUCCESS);
 
-        // Descriptor sets
-        VkDescriptorSetLayout* set_layouts = malloc(rproc_ct * sizeof(set_layouts[0]));
-        for (int i = 0; i < rproc_ct; ++i) set_layouts[i] = desc_lt;
-
-        VkDescriptorSetAllocateInfo set_info = {0};
-        set_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-        set_info.descriptorPool = dpool;
-        set_info.descriptorSetCount = rproc_ct;
-        set_info.pSetLayouts = set_layouts;
-
+        // Sets
         VkDescriptorSet* sets = malloc(rproc_ct * sizeof(sets[0]));
-        res = vkAllocateDescriptorSets(base.device, &set_info, sets);
-        assert(res == VK_SUCCESS);
-
-        free(set_layouts);
-
         for (int i = 0; i < rproc_ct; ++i) {
-                VkDescriptorBufferInfo desc_buf = {0};
-                desc_buf.buffer = ubufs[i].handle;
-                desc_buf.range = sizeof(ubufs[i]);
+                struct Descriptor descriptors[2] = {0};
+                descriptors[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                descriptors[0].binding = 0;
+                descriptors[0].shader_stage_flags = VK_SHADER_STAGE_VERTEX_BIT;
+                descriptors[0].buffer.buffer = ubufs[i].handle;
+                descriptors[0].buffer.range = ubufs[i].size;
 
-                VkWriteDescriptorSet desc_writes[2] = {0};
-                desc_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                desc_writes[0].dstSet = sets[i];
-                desc_writes[0].dstBinding = 0;
-                desc_writes[0].dstArrayElement = 0;
-                desc_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                desc_writes[0].descriptorCount = 1;
-                desc_writes[0].pBufferInfo = &desc_buf;
+                descriptors[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                descriptors[1].binding = 1;
+                descriptors[1].shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
+                descriptors[1].image.sampler = tex_sampler;
+                descriptors[1].image.imageView = tex.view;
+                descriptors[1].image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
-                VkDescriptorImageInfo desc_image = {0};
-                desc_image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                desc_image.imageView = tex.view;
-                desc_image.sampler = tex_sampler;
-
-                desc_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                desc_writes[1].dstSet = sets[i];
-                desc_writes[1].dstBinding = 1;
-                desc_writes[1].dstArrayElement = 0;
-                desc_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                desc_writes[1].descriptorCount = 1;
-                desc_writes[1].pImageInfo = &desc_image;
-
-                vkUpdateDescriptorSets(base.device, sizeof(desc_writes) / sizeof(desc_writes[0]), desc_writes, 0, NULL);
+                set_create(base.device, dpool, desc_lt,
+                           sizeof(descriptors) / sizeof(descriptors[0]), descriptors, &sets[i]);
         }
 
         vkDestroyDescriptorSetLayout(base.device, desc_lt, NULL);

@@ -1,13 +1,13 @@
 #version 450
 
-layout (location = 0) in vec3 in_pos;
-layout (location = 1) in vec2 in_tex_c;
-
-layout (binding = 0) uniform UBO {
+layout (set = 0, binding = 0) uniform UBO {
         mat4 model;
         mat4 view;
         mat4 proj;
 } mvp;
+
+layout (location = 0) in vec3 in_pos;
+layout (location = 1) in vec2 in_tex_c;
 
 layout (location = 0) out vec2 out_tex_c;
 
