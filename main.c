@@ -107,29 +107,66 @@ int main() {
         base_create(window, VALIDATION_ON, INSTANCE_EXT_CT, INSTANCE_EXTS, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
         // Load model
-        fastObjMesh* mesh = fast_obj_read("assets/models/dragon.obj");
+        fastObjMesh* mesh = fast_obj_read("assets/models/sponza/sponza.obj");
+        printf("Mesh has %u materials\n", mesh->material_count);
 
-	uint32_t vertex_ct = mesh->face_count * 3;
-	struct Vertex* vertices = malloc(vertex_ct * sizeof(vertices[0]));
-	uint32_t vertex_idx = 0;
-
-	uint32_t index_ct = mesh->face_count * 3;
-	uint32_t* indices = malloc(index_ct * sizeof(indices[0]));
+	// Me messing around
+	int* mat_vertex_ct = malloc(mesh->material_count * sizeof(mat_vertex_ct[0]));
+	int vertex_ct = 0;
+	memset(mat_vertex_ct, 0, mesh->material_count * sizeof(mat_vertex_ct[0]));
 	for (int i = 0; i < mesh->face_count; i++) {
+        	mat_vertex_ct[mesh->face_materials[i]] += 3;
+        	vertex_ct += 3;
+	}
+
+	int index_ct = vertex_ct;
+
+	for (int i = 0; i < mesh->material_count; i++) {
+        	const char* name = mesh->materials[i].name;
+        	printf("Material '%s' has %d vertices\n", name, mat_vertex_ct[i]);
+	}
+	printf("%d vertices in total\n", vertex_ct);
+
+	size_t mat_vertex_offsets_sz = mesh->material_count * sizeof(int);
+	int* mat_vertex_offsets = malloc(mat_vertex_offsets_sz);
+	int cur_offset = 0;
+	for (int i = 0; i < mesh->material_count; i++) {
+        	mat_vertex_offsets[i] = cur_offset;
+        	cur_offset += mat_vertex_ct[i];
+        	printf("Material %d starts at %d\n", i, mat_vertex_offsets[i]);
+	}
+
+	// These are to keep track of where we can write into for each material
+	int* mat_vertex_indices = malloc(mat_vertex_offsets_sz);
+	memcpy(mat_vertex_indices, mat_vertex_offsets, mat_vertex_offsets_sz);
+
+	struct Vertex* vertices = malloc(vertex_ct * sizeof(vertices[0]));
+	uint32_t* indices = malloc(vertex_ct * sizeof(indices[0]));
+
+	uint32_t idx_out_idx = 0;
+	// Write to buffers
+	for (int i = 0; i < mesh->face_count; i++) {
+        	assert(mesh->face_vertices[i] == 3);
+        	uint32_t mat_idx = mesh->face_materials[i];
         	for (int j = 0; j < 3; j++) {
                 	uint32_t v_idx = mesh->indices[3*i+j].p;
-                	uint32_t n_idx = mesh->indices[3*i+j].n;
-                	indices[3*i+j] = v_idx;
-                	vertices[v_idx].pos[0] = mesh->positions[3*v_idx+0];
-                	vertices[v_idx].pos[1] = mesh->positions[3*v_idx+1];
-                	vertices[v_idx].pos[2] = mesh->positions[3*v_idx+2];
-                	vertices[v_idx].tex_c[0] = mesh->normals[3*n_idx+0];
-                	vertices[v_idx].tex_c[1] = mesh->normals[3*n_idx+1];
-                	vertex_idx++;
+                	uint32_t t_idx = mesh->indices[3*i+j].t;
+                	uint32_t vtx_out_idx = mat_vertex_indices[mat_idx];
+			vertices[vtx_out_idx].pos[0] = mesh->positions[3*v_idx+0];
+			vertices[vtx_out_idx].pos[1] = mesh->positions[3*v_idx+1];
+			vertices[vtx_out_idx].pos[2] = mesh->positions[3*v_idx+2];
+			vertices[vtx_out_idx].tex_c[0] = mesh->texcoords[2*t_idx+0];
+			vertices[vtx_out_idx].tex_c[1] = mesh->texcoords[2*t_idx+1];
+			indices[vtx_out_idx] = vtx_out_idx;
+			mat_vertex_indices[mat_idx]++;
+			idx_out_idx++;
         	}
 	}
 
-	fast_obj_destroy(mesh);
+	free(mat_vertex_indices);
+	// Free mat_vertex_offsets, mat_vertex_ct later
+
+	int material_ct = mesh->material_count;
 
         // Meshes
         struct Buffer vbuf, ibuf;
@@ -142,46 +179,48 @@ int main() {
         free(indices);
 
         // Load textures
-        int tex_width, tex_height;
-	stbi_uc* pixels_diffuse = load_tex("assets/cat.png",
-                                           &tex_width, &tex_height);
-	assert(pixels_diffuse != NULL);
-	VkDeviceSize tex_diffuse_size = tex_width * tex_height * 4;
+	struct Image* textures = malloc(material_ct * sizeof(textures[0]));
+	for (int i = 0; i < material_ct; i++) {
+        	const char* path = mesh->materials[i].map_Kd.path;
+        	if (path == NULL) path = "assets/not_found.png";
 
-        int tex_normal_width, tex_normal_height;
-	stbi_uc* pixels_normal = load_tex("assets/cat.png",
-                                           &tex_normal_width, &tex_normal_height);
-	assert(pixels_normal != NULL);
-	assert(tex_normal_width == tex_width && tex_normal_height == tex_height);
+                int width, height;
+        	stbi_uc* pixels = load_tex(path, &width, &height);
+        	int tex_size = 4 * width * height;
 
-	// Create source buffer
-	struct Buffer tex_buf;
-	buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-	              tex_diffuse_size, &tex_buf);
-	mem_write(base.device, tex_buf.mem, tex_diffuse_size, pixels_diffuse);
-	stbi_image_free(pixels_diffuse);
+        	// Create source buffer
+        	struct Buffer tex_buf;
+        	buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        	              tex_size, &tex_buf);
+        	mem_write(base.device, tex_buf.mem, tex_size, pixels);
+        	stbi_image_free(pixels);
 
-	// Create diffuse texture
-	struct Image tex_diffuse;
-	image_create(base.phys_dev, base.device, VK_FORMAT_R8G8B8A8_SRGB, tex_width, tex_height,
-	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                     VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &tex_diffuse);
+        	// Create texture
+        	image_create(base.phys_dev, base.device, VK_FORMAT_R8G8B8A8_SRGB, width, height,
+        	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &textures[i]);
 
-	// Copy to diffuse texture
-	image_trans(base.device, base.queue, base.cpool, tex_diffuse.handle, VK_IMAGE_ASPECT_COLOR_BIT,
-	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
-	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        	// Copy to texture
+        	image_trans(base.device, base.queue, base.cpool, textures[i].handle, VK_IMAGE_ASPECT_COLOR_BIT,
+        	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
+        	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
-	image_copy_from_buffer(base.device, base.queue, base.cpool, VK_IMAGE_ASPECT_COLOR_BIT,
-	                       tex_buf.handle, tex_diffuse.handle, tex_width, tex_height);
+        	image_copy_from_buffer(base.device, base.queue, base.cpool, VK_IMAGE_ASPECT_COLOR_BIT,
+        	                       tex_buf.handle, textures[i].handle, width, height);
 
-	image_trans(base.device, base.queue, base.cpool, tex_diffuse.handle, VK_IMAGE_ASPECT_COLOR_BIT,
-	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        	image_trans(base.device, base.queue, base.cpool, textures[i].handle, VK_IMAGE_ASPECT_COLOR_BIT,
+        	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+        	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+        	buffer_destroy(base.device, &tex_buf);
+	}
+
+	// Cleanup
+	fast_obj_destroy(mesh);
 
 	// Create sampler
 	VkPhysicalDeviceProperties phys_dev_props;
@@ -295,27 +334,29 @@ int main() {
         assert(res == VK_SUCCESS);
 
         // Descriptor set layouts
-	VkDescriptorSetLayout set_layouts[2];
-
        	VkDescriptorSetLayoutBinding set_cam_desc = {0};
         set_cam_desc.binding = 0;
         set_cam_desc.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         set_cam_desc.descriptorCount = 1;
         set_cam_desc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        set_layout_create(base.device, 1, &set_cam_desc, &set_layouts[0]);
+        VkDescriptorSetLayout set_cam_layout;
+        set_layout_create(base.device, 1, &set_cam_desc, &set_cam_layout);
 
 	VkDescriptorSetLayoutBinding set_tex_desc = {0};
         set_tex_desc.binding = 0;
         set_tex_desc.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         set_tex_desc.descriptorCount = 1;
         set_tex_desc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        set_layout_create(base.device, 1, &set_tex_desc, &set_layouts[1]);
+        VkDescriptorSetLayout set_tex_layout;
+        set_layout_create(base.device, 1, &set_tex_desc, &set_tex_layout);
 
         // Pipeline layout
+	VkDescriptorSetLayout pipeline_set_layouts[] = {set_cam_layout, set_tex_layout};
+
         VkPipelineLayoutCreateInfo pipeline_lt_info = {0};
         pipeline_lt_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipeline_lt_info.setLayoutCount = sizeof(set_layouts) / sizeof(set_layouts[0]);
-        pipeline_lt_info.pSetLayouts = set_layouts;
+        pipeline_lt_info.setLayoutCount = sizeof(pipeline_set_layouts) / sizeof(pipeline_set_layouts[0]);
+        pipeline_lt_info.pSetLayouts = pipeline_set_layouts;
 
         VkPipelineLayout pipeline_lt;
         res = vkCreatePipelineLayout(base.device, &pipeline_lt_info, NULL, &pipeline_lt);
@@ -341,13 +382,13 @@ int main() {
 
 	// Depth buffers
 	struct Image* depth_images = malloc(swapchain.image_ct * sizeof(depth_images[0]));
-	for (int i = 0; i < swapchain.image_ct; ++i) {
+	for (int i = 0; i < swapchain.image_ct; i++) {
         	depth_create(base.phys_dev, base.device, DEPTH_FORMAT, swapchain.width, swapchain.height, &depth_images[i]);
 	};
 
         // Framebuffers
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
-        for (int i = 0; i < swapchain.image_ct; ++i) {
+        for (int i = 0; i < swapchain.image_ct; i++) {
                 VkImageView views[] = {swapchain.views[i], depth_images[i].view};
                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
                                    sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
@@ -355,15 +396,15 @@ int main() {
 
         // Command buffers
         VkCommandBuffer cbufs[CONCURRENT_FRAMES];
-        for (int i = 0; i < CONCURRENT_FRAMES; ++i) cbuf_alloc(base.device, base.cpool, &cbufs[i]);
+        for (int i = 0; i < CONCURRENT_FRAMES; i++) cbuf_alloc(base.device, base.cpool, &cbufs[i]);
 
         // Sync sets
         struct SyncSet sync_sets [CONCURRENT_FRAMES];
-        for (int i = 0; i < CONCURRENT_FRAMES; ++i) sync_set_create(base.device, &sync_sets[i]);
+        for (int i = 0; i < CONCURRENT_FRAMES; i++) sync_set_create(base.device, &sync_sets[i]);
 
         // Uniform buffers (one for every render process)
         struct Buffer ubufs[CONCURRENT_FRAMES];
-        for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
+        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                               sizeof(struct Uniform), &ubufs[i]);
@@ -374,13 +415,13 @@ int main() {
         dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES;
         dpool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        dpool_sizes[1].descriptorCount = CONCURRENT_FRAMES;
+        dpool_sizes[1].descriptorCount = material_ct;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
         dpool_info.pPoolSizes = dpool_sizes;
-        dpool_info.maxSets = 2 * CONCURRENT_FRAMES;
+        dpool_info.maxSets = CONCURRENT_FRAMES + material_ct;
 
         VkDescriptorPool dpool;
         res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
@@ -388,35 +429,37 @@ int main() {
 
         // Sets
         VkDescriptorSet sets_cam[CONCURRENT_FRAMES];
-        VkDescriptorSet sets_tex[CONCURRENT_FRAMES];
-        for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
+        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 struct Descriptor desc_cam = {0};
                 desc_cam.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
                 desc_cam.binding = 0;
                 desc_cam.shader_stage_flags = VK_SHADER_STAGE_VERTEX_BIT;
                 desc_cam.buffer.buffer = ubufs[i].handle;
                 desc_cam.buffer.range = ubufs[i].size;
-                set_create(base.device, dpool, set_layouts[0],
+                set_create(base.device, dpool, set_cam_layout,
                            1, &desc_cam, &sets_cam[i]);
+        }
 
+        VkDescriptorSet* sets_tex = malloc(material_ct * sizeof(sets_tex[0]));
+	for (int i = 0; i < material_ct; i++) {
                 struct Descriptor desc_tex = {0};
                 desc_tex.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                 desc_tex.binding = 0;
                 desc_tex.shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
                 desc_tex.image.sampler = tex_sampler;
-                desc_tex.image.imageView = tex_diffuse.view;
+                desc_tex.image.imageView = textures[i].view;
                 desc_tex.image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                set_create(base.device, dpool, set_layouts[1],
+                set_create(base.device, dpool, set_tex_layout,
                            1, &desc_tex, &sets_tex[i]);
-        }
+	}
 
-	for (int i = 0; i < sizeof(set_layouts) / sizeof(set_layouts[0]); ++i) {
-                vkDestroyDescriptorSetLayout(base.device, set_layouts[i], NULL);
+	for (int i = 0; i < sizeof(pipeline_set_layouts) / sizeof(pipeline_set_layouts[0]); i++) {
+                vkDestroyDescriptorSetLayout(base.device, pipeline_set_layouts[i], NULL);
 	}
 
         // Image fences
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
-        for (int i = 0; i < swapchain.image_ct; ++i) image_fences[i] = VK_NULL_HANDLE;
+        for (int i = 0; i < swapchain.image_ct; i++) image_fences[i] = VK_NULL_HANDLE;
 
         // Main loop
         int frame_ct = 0;
@@ -438,12 +481,12 @@ int main() {
 
                         assert(swapchain.format == old_format && swapchain.image_ct == old_image_ct);
 
-                        for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
+                        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                                 sync_set_destroy(base.device, &sync_sets[i]);
                                 sync_set_create(base.device, &sync_sets[i]);
                         }
 
-                        for (int i = 0; i < swapchain.image_ct; ++i) {
+                        for (int i = 0; i < swapchain.image_ct; i++) {
                                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
 
                                 image_destroy(base.device, &depth_images[i]);
@@ -538,9 +581,13 @@ int main() {
 
                 vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
                                         0, 1, &sets_cam[frame_idx], 0, NULL);
-                vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
-                                        1, 1, &sets_tex[frame_idx], 0, NULL);
-                vkCmdDrawIndexed(cbuf, index_ct, 1, 0, 0, 0);
+                for (int i = 0; i < material_ct; ++i) {
+                        vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
+                                                1, 1, &sets_tex[i], 0, NULL);
+                        int index_offset = mat_vertex_offsets[i];
+                        int index_ct = mat_vertex_ct[i];
+                        vkCmdDrawIndexed(cbuf, index_ct, 1, index_offset, 0, 0);
+                }
                 vkCmdEndRenderPass(cbuf);
 
                 res = vkEndCommandBuffer(cbuf);
@@ -586,7 +633,7 @@ int main() {
                 else assert(res == VK_SUCCESS);
 
                 glfwPollEvents();
-                ++frame_ct;
+                frame_ct++;
         }
 
         struct timespec stop_time;
@@ -610,19 +657,22 @@ int main() {
 
         swapchain_destroy(base.device, &swapchain);
 
-	image_destroy(base.device, &tex_diffuse);
+	//image_destroy(base.device, &tex_diffuse);
 	vkDestroySampler(base.device, tex_sampler, NULL);
-        buffer_destroy(base.device, &tex_buf);
 
         buffer_destroy(base.device, &vbuf);
         buffer_destroy(base.device, &ibuf);
 
-        for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
+        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 sync_set_destroy(base.device, &sync_sets[i]);
                 buffer_destroy(base.device, &ubufs[i]);
         }
 
-        for (int i = 0; i < swapchain.image_ct; ++i) {
+        for (int i = 0; i < material_ct; ++i) {
+                image_destroy(base.device, &textures[i]);
+        }
+
+        for (int i = 0; i < swapchain.image_ct; i++) {
                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
                 image_destroy(base.device, &depth_images[i]);
         }
