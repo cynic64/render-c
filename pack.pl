@@ -97,12 +97,12 @@ for my $mat_name (keys %mat_paths) {
 my ($atlas_width, $atlas_height, %positions) = pack_rects %rectangles;
 
 printf "%d mats: @{[keys %positions]}\n", scalar keys %positions;
+printf "Packed dimensions: %dx%d\n", $atlas_width, $atlas_height;
 
 # Write to atlases (if necessary)
 unless ($diffuse_atlas_path eq '/dev/null' || $normal_atlas_path eq '/dev/null') {
         # Write to diffuse atlas
         my $diffuse_img = Image::Magick->new(size => $atlas_width.'x'.$atlas_height);
-        printf "Atlas dimensions: %dx%d\n", $atlas_width, $atlas_height;
         $diffuse_img->Read('canvas:white') && die;
 
         for my $mat (keys %positions) {
@@ -120,8 +120,7 @@ unless ($diffuse_atlas_path eq '/dev/null' || $normal_atlas_path eq '/dev/null')
 
         # Write to normal atlas, scaling if necessary
         my $normal_img = Image::Magick->new(size => $atlas_width.'x'.$atlas_height);
-        printf "Atlas dimensions: %dx%d\n", $atlas_width, $atlas_height;
-        $normal_img->Read('canvas:white') && die;
+        $normal_img->Read('canvas:#8888ff') && die;
 
         for my $mat (keys %positions) {
                 my ($x, $y, $diffuse_w, $diffuse_h) = @{$positions{$mat}};
@@ -137,16 +136,18 @@ unless ($diffuse_atlas_path eq '/dev/null' || $normal_atlas_path eq '/dev/null')
         $normal_flat->Write($normal_atlas_path) && die;
 }
 
-# Figure out which texture coordinates correspond to each material
+# Load all texture coordinates
 open (my $obj_fh, '<', $obj_path) || die $!;
-my $cur_mat;
-my @tex_coord_mats;
+my @tex_coords;
 
 while (<$obj_fh>) {
         chomp;
         $cur_mat = $1 if /^usemtl (.*)$/;
         if (m|^f \d*/(\d+).*? \d*/(\d+).*? \d*/(\d+)|) {
                 die unless $cur_mat;
+                die "Already assigned! ($cur_mat)" if $tex_coord_mats[$1-1]
+                                                   || $tex_coord_mats[$1-2]
+                                                   || $tex_coord_mats[$1-3];
                 $tex_coord_mats[$1-1] = $cur_mat;
                 $tex_coord_mats[$2-1] = $cur_mat;
                 $tex_coord_mats[$3-1] = $cur_mat;
@@ -167,7 +168,7 @@ while (<$obj_fh>) {
                 my ($scale_x, $scale_y) = ($width / $atlas_width, $height / $atlas_height);
                 my ($off_x, $off_y) = ($img_x / $atlas_width, $img_y / $atlas_height);
                 my ($x_new, $y_new) = ($x_old*$scale_x+$off_x, $y_old*$scale_y+$off_y);
-                # printf "($x_old, $y_old) is at $img_x,$img_y and is %dx%d, --> ($x_new,$y_new)\n", $width, $height;
+                printf "($x_old, $y_old) is at $img_x,$img_y and is %dx%d, --> ($x_new,$y_new)\n", $width, $height;
                 print $obj_fh_out "vt $x_new $y_new\n";
 
                 $tex_coord_idx++;
@@ -184,5 +185,6 @@ while (<$mtl_fh>) {
         chomp;
         if (/^map_Kd /) { print $mtl_fh_out "map_Kd $diffuse_atlas_path\n" }
         elsif (/^map_bump /) { print $mtl_fh_out "map_bump $normal_atlas_path\n" }
+        elsif (/^map/) { }
         else { print $mtl_fh_out "$_\n" }
 }

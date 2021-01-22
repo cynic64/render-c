@@ -16,6 +16,18 @@ struct Descriptor {
         VkDescriptorImageInfo image;
 };
 
+void set_layout_create(VkDevice device, uint32_t binding_ct, const VkDescriptorSetLayoutBinding* bindings,
+                       VkDescriptorSetLayout* layout)
+{
+        VkDescriptorSetLayoutCreateInfo info = {0};
+        info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        info.bindingCount = binding_ct;
+        info.pBindings = bindings;
+
+        VkResult res = vkCreateDescriptorSetLayout(device, &info, NULL, layout);
+        assert(res == VK_SUCCESS);
+}
+
 void set_create(VkDevice device, VkDescriptorPool dpool, VkDescriptorSetLayout layout,
                 uint32_t descriptor_ct, const struct Descriptor* descriptors,
                 VkDescriptorSet* set)

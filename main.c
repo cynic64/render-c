@@ -1,4 +1,5 @@
 #include "external/cglm/include/cglm/cglm.h"
+#define STBI_ONLY_TGA
 #define STBI_ONLY_PNG
 #define STBI_FAILURE_USERMSG
 #define STB_IMAGE_IMPLEMENTATION
@@ -60,6 +61,14 @@ struct SyncSet {
         VkSemaphore render_sem;
 };
 
+struct Object {
+        struct Buffer vertices;
+        uint32_t vertex_ct;
+        struct Buffer indices;
+        uint32_t index_ct;
+        VkDescriptorSet set;
+};
+
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
         semaphore_create(device, &sync_set->acquire_sem);
@@ -83,7 +92,7 @@ void depth_create(VkPhysicalDevice phys_dev, VkDevice device,
 {
 	image_create(phys_dev, device, format, width, height,
 	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-	             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+	             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
 	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, image);
 }
 
@@ -102,19 +111,21 @@ int main() {
 
 	uint32_t vertex_ct = mesh->face_count * 3;
 	struct Vertex* vertices = malloc(vertex_ct * sizeof(vertices[0]));
+	uint32_t vertex_idx = 0;
 
 	uint32_t index_ct = mesh->face_count * 3;
 	uint32_t* indices = malloc(index_ct * sizeof(indices[0]));
-	for (int i = 0; i < mesh->face_count; ++i) {
-        	for (int j = 0; j < 3; ++j) {
+	for (int i = 0; i < mesh->face_count; i++) {
+        	for (int j = 0; j < 3; j++) {
                 	uint32_t v_idx = mesh->indices[3*i+j].p;
                 	uint32_t n_idx = mesh->indices[3*i+j].n;
                 	indices[3*i+j] = v_idx;
                 	vertices[v_idx].pos[0] = mesh->positions[3*v_idx+0];
                 	vertices[v_idx].pos[1] = mesh->positions[3*v_idx+1];
                 	vertices[v_idx].pos[2] = mesh->positions[3*v_idx+2];
-                	vertices[v_idx].tex_c[0] = mesh->normals[3*n_idx+2];
-                	vertices[v_idx].tex_c[1] = mesh->normals[3*n_idx+2];
+                	vertices[v_idx].tex_c[0] = mesh->normals[3*n_idx+0];
+                	vertices[v_idx].tex_c[1] = mesh->normals[3*n_idx+1];
+                	vertex_idx++;
         	}
 	}
 
@@ -130,37 +141,44 @@ int main() {
         free(vertices);
         free(indices);
 
-        // Load texture
+        // Load textures
         int tex_width, tex_height;
-	stbi_uc* pixels = load_tex("assets/cat.png", &tex_width, &tex_height);
-	assert(pixels != NULL);
-	VkDeviceSize tex_size = tex_width * tex_height * 4;
+	stbi_uc* pixels_diffuse = load_tex("assets/cat.png",
+                                           &tex_width, &tex_height);
+	assert(pixels_diffuse != NULL);
+	VkDeviceSize tex_diffuse_size = tex_width * tex_height * 4;
+
+        int tex_normal_width, tex_normal_height;
+	stbi_uc* pixels_normal = load_tex("assets/cat.png",
+                                           &tex_normal_width, &tex_normal_height);
+	assert(pixels_normal != NULL);
+	assert(tex_normal_width == tex_width && tex_normal_height == tex_height);
 
 	// Create source buffer
 	struct Buffer tex_buf;
 	buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-	              tex_size, &tex_buf);
-	mem_write(base.device, tex_buf.mem, tex_size, pixels);
-	stbi_image_free(pixels);
+	              tex_diffuse_size, &tex_buf);
+	mem_write(base.device, tex_buf.mem, tex_diffuse_size, pixels_diffuse);
+	stbi_image_free(pixels_diffuse);
 
-	// Create texture
-	struct Image tex;
+	// Create diffuse texture
+	struct Image tex_diffuse;
 	image_create(base.phys_dev, base.device, VK_FORMAT_R8G8B8A8_SRGB, tex_width, tex_height,
 	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
                      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &tex);
+		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &tex_diffuse);
 
-	// Copy to texture
-	image_trans(base.device, base.queue, base.cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
+	// Copy to diffuse texture
+	image_trans(base.device, base.queue, base.cpool, tex_diffuse.handle, VK_IMAGE_ASPECT_COLOR_BIT,
 	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
 	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
 	image_copy_from_buffer(base.device, base.queue, base.cpool, VK_IMAGE_ASPECT_COLOR_BIT,
-	                       tex_buf.handle, tex.handle, tex_width, tex_height);
+	                       tex_buf.handle, tex_diffuse.handle, tex_width, tex_height);
 
-	image_trans(base.device, base.queue, base.cpool, tex.handle, VK_IMAGE_ASPECT_COLOR_BIT,
+	image_trans(base.device, base.queue, base.cpool, tex_diffuse.handle, VK_IMAGE_ASPECT_COLOR_BIT,
 	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
 	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
@@ -276,31 +294,28 @@ int main() {
         res = vkCreateRenderPass(base.device, &rpass_info, NULL, &rpass);
         assert(res == VK_SUCCESS);
 
-        // Descriptor set layout
-       	VkDescriptorSetLayoutBinding descriptors[2] = {0};
-        descriptors[0].binding = 0;
-        descriptors[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptors[0].descriptorCount = 1;
-        descriptors[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        // Descriptor set layouts
+	VkDescriptorSetLayout set_layouts[2];
 
-        descriptors[1].binding = 1;
-        descriptors[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptors[1].descriptorCount = 1;
-        descriptors[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+       	VkDescriptorSetLayoutBinding set_cam_desc = {0};
+        set_cam_desc.binding = 0;
+        set_cam_desc.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        set_cam_desc.descriptorCount = 1;
+        set_cam_desc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+        set_layout_create(base.device, 1, &set_cam_desc, &set_layouts[0]);
 
-        VkDescriptorSetLayoutCreateInfo set_layout_info = {0};
-        set_layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-        set_layout_info.bindingCount = sizeof(descriptors) / sizeof(descriptors[0]);
-        set_layout_info.pBindings = descriptors;
-
-        VkDescriptorSetLayout set_layout = {0};
-        res = vkCreateDescriptorSetLayout(base.device, &set_layout_info, NULL, &set_layout);
+	VkDescriptorSetLayoutBinding set_tex_desc = {0};
+        set_tex_desc.binding = 0;
+        set_tex_desc.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        set_tex_desc.descriptorCount = 1;
+        set_tex_desc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        set_layout_create(base.device, 1, &set_tex_desc, &set_layouts[1]);
 
         // Pipeline layout
         VkPipelineLayoutCreateInfo pipeline_lt_info = {0};
         pipeline_lt_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipeline_lt_info.setLayoutCount = 1;
-        pipeline_lt_info.pSetLayouts = &set_layout;
+        pipeline_lt_info.setLayoutCount = sizeof(set_layouts) / sizeof(set_layouts[0]);
+        pipeline_lt_info.pSetLayouts = set_layouts;
 
         VkPipelineLayout pipeline_lt;
         res = vkCreatePipelineLayout(base.device, &pipeline_lt_info, NULL, &pipeline_lt);
@@ -365,34 +380,39 @@ int main() {
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
         dpool_info.pPoolSizes = dpool_sizes;
-        dpool_info.maxSets = CONCURRENT_FRAMES;
+        dpool_info.maxSets = 2 * CONCURRENT_FRAMES;
 
         VkDescriptorPool dpool;
         res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
         assert(res == VK_SUCCESS);
 
         // Sets
-        VkDescriptorSet sets[CONCURRENT_FRAMES];
+        VkDescriptorSet sets_cam[CONCURRENT_FRAMES];
+        VkDescriptorSet sets_tex[CONCURRENT_FRAMES];
         for (int i = 0; i < CONCURRENT_FRAMES; ++i) {
-                struct Descriptor descriptors[2] = {0};
-                descriptors[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                descriptors[0].binding = 0;
-                descriptors[0].shader_stage_flags = VK_SHADER_STAGE_VERTEX_BIT;
-                descriptors[0].buffer.buffer = ubufs[i].handle;
-                descriptors[0].buffer.range = ubufs[i].size;
+                struct Descriptor desc_cam = {0};
+                desc_cam.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+                desc_cam.binding = 0;
+                desc_cam.shader_stage_flags = VK_SHADER_STAGE_VERTEX_BIT;
+                desc_cam.buffer.buffer = ubufs[i].handle;
+                desc_cam.buffer.range = ubufs[i].size;
+                set_create(base.device, dpool, set_layouts[0],
+                           1, &desc_cam, &sets_cam[i]);
 
-                descriptors[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                descriptors[1].binding = 1;
-                descriptors[1].shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
-                descriptors[1].image.sampler = tex_sampler;
-                descriptors[1].image.imageView = tex.view;
-                descriptors[1].image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-                set_create(base.device, dpool, set_layout,
-                           sizeof(descriptors) / sizeof(descriptors[0]), descriptors, &sets[i]);
+                struct Descriptor desc_tex = {0};
+                desc_tex.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                desc_tex.binding = 0;
+                desc_tex.shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
+                desc_tex.image.sampler = tex_sampler;
+                desc_tex.image.imageView = tex_diffuse.view;
+                desc_tex.image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                set_create(base.device, dpool, set_layouts[1],
+                           1, &desc_tex, &sets_tex[i]);
         }
 
-        vkDestroyDescriptorSetLayout(base.device, set_layout, NULL);
+	for (int i = 0; i < sizeof(set_layouts) / sizeof(set_layouts[0]); ++i) {
+                vkDestroyDescriptorSetLayout(base.device, set_layouts[i], NULL);
+	}
 
         // Image fences
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
@@ -453,12 +473,13 @@ int main() {
                 clock_gettime(CLOCK_MONOTONIC_RAW, &time);
                 double elapsed = (double) ((time.tv_sec * 1000000000 + time.tv_nsec)
                                          - (start_time.tv_sec * 1000000000 + start_time.tv_nsec)) / 1000000000.0F;
-                vec3 eye = {2.0F * sin(elapsed), 1.0F, 2.0F * cos(elapsed)};
+                vec3 eye = {2.0F * sin(elapsed * 0.2), 0.5F, 2.0F * cos(elapsed * 0.2)};
+                vec3 looking_at = {0.0F, 0.0F, 0.0F};
 
                 struct Uniform uni_data;
                 glm_mat4_identity(uni_data.model);
-                glm_lookat(eye, (vec3){0.0F, 0.0F, 0.0F}, (vec3){0.0F, -1.0F, 0.0F}, uni_data.view);
-                glm_perspective(1.0F, (float) swapchain.width / (float) swapchain.height, 0.1F, 10.0F, uni_data.proj);
+                glm_lookat(eye, looking_at, (vec3){0.0F, -1.0F, 0.0F}, uni_data.view);
+                glm_perspective(1.5F, (float) swapchain.width / (float) swapchain.height, 0.1F, 10000.0F, uni_data.proj);
                 struct Buffer* ubuf = &ubufs[frame_idx];
                 mem_write(base.device, ubuf->mem, sizeof(uni_data), &uni_data);
 
@@ -516,7 +537,9 @@ int main() {
                 vkCmdSetScissor(cbuf, 0, 1, &scissor);
 
                 vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
-                                        0, 1, &sets[frame_idx], 0, NULL);
+                                        0, 1, &sets_cam[frame_idx], 0, NULL);
+                vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
+                                        1, 1, &sets_tex[frame_idx], 0, NULL);
                 vkCmdDrawIndexed(cbuf, index_ct, 1, 0, 0, 0);
                 vkCmdEndRenderPass(cbuf);
 
@@ -587,7 +610,7 @@ int main() {
 
         swapchain_destroy(base.device, &swapchain);
 
-	image_destroy(base.device, &tex);
+	image_destroy(base.device, &tex_diffuse);
 	vkDestroySampler(base.device, tex_sampler, NULL);
         buffer_destroy(base.device, &tex_buf);
 
