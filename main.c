@@ -110,7 +110,6 @@ int main() {
         fastObjMesh* mesh = fast_obj_read("assets/models/sponza/sponza.obj");
         printf("Mesh has %u materials\n", mesh->material_count);
 
-	// Me messing around
 	int* mat_vertex_ct = malloc(mesh->material_count * sizeof(mat_vertex_ct[0]));
 	int vertex_ct = 0;
 	memset(mat_vertex_ct, 0, mesh->material_count * sizeof(mat_vertex_ct[0]));
@@ -668,9 +667,7 @@ int main() {
                 buffer_destroy(base.device, &ubufs[i]);
         }
 
-        for (int i = 0; i < material_ct; ++i) {
-                image_destroy(base.device, &textures[i]);
-        }
+        for (int i = 0; i < material_ct; ++i) image_destroy(base.device, &textures[i]);
 
         for (int i = 0; i < swapchain.image_ct; i++) {
                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
