@@ -10,6 +10,8 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "src/hashmap.h"
+
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
 #include "src/ll/image.h"
@@ -46,6 +48,7 @@ const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 
 struct Vertex {
         vec3 pos;
+        vec3 norm;
         vec2 tex_c;
 };
 
@@ -62,12 +65,26 @@ struct SyncSet {
 };
 
 struct Object {
-        struct Buffer vertices;
-        uint32_t vertex_ct;
-        struct Buffer indices;
+        uint32_t index_offset;
         uint32_t index_ct;
-        VkDescriptorSet set;
+        VkDescriptorSet tex_set;
 };
+
+uint32_t vertex_hash(uint32_t bucket_ct, const void* key) {
+        const uint8_t* bytes = key;
+
+	uint32_t hash = 0;
+	for (int i = 0; i < sizeof(struct Vertex); i++) {
+        	hash ^= hash << 5;
+        	hash += bytes[i];
+	}
+
+	return hash % bucket_ct;
+}
+
+int vertex_compare(const void* a, const void* b) {
+        return memcmp(a, b, sizeof(struct Vertex));
+}
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
@@ -110,62 +127,58 @@ int main() {
         fastObjMesh* mesh = fast_obj_read("assets/models/sponza/sponza.obj");
         printf("Mesh has %u materials\n", mesh->material_count);
 
-	int* mat_vertex_ct = malloc(mesh->material_count * sizeof(mat_vertex_ct[0]));
-	int vertex_ct = 0;
-	memset(mat_vertex_ct, 0, mesh->material_count * sizeof(mat_vertex_ct[0]));
-	for (int i = 0; i < mesh->face_count; i++) {
-        	mat_vertex_ct[mesh->face_materials[i]] += 3;
-        	vertex_ct += 3;
-	}
+        uint32_t vertex_ct_bound = 0;
+        for (int i = 0; i < mesh->face_count; i++) vertex_ct_bound += 3 * (mesh->face_vertices[i] - 2);
+        uint32_t index_ct_bound = vertex_ct_bound;
 
-	int index_ct = vertex_ct;
+        struct Vertex* const vertices = malloc(vertex_ct_bound * sizeof(vertices[0]));
+        uint32_t* const indices = malloc(index_ct_bound * sizeof(indices[0]));
 
-	for (int i = 0; i < mesh->material_count; i++) {
-        	const char* name = mesh->materials[i].name;
-        	printf("Material '%s' has %d vertices\n", name, mat_vertex_ct[i]);
-	}
-	printf("%d vertices in total\n", vertex_ct);
+        uint32_t vertex_idx_out = 0;
+        uint32_t index_idx_out = 0;
+        uint32_t index_idx_in = 0;
 
-	size_t mat_vertex_offsets_sz = mesh->material_count * sizeof(int);
-	int* mat_vertex_offsets = malloc(mat_vertex_offsets_sz);
-	int cur_offset = 0;
-	for (int i = 0; i < mesh->material_count; i++) {
-        	mat_vertex_offsets[i] = cur_offset;
-        	cur_offset += mat_vertex_ct[i];
-        	printf("Material %d starts at %d\n", i, mat_vertex_offsets[i]);
-	}
+        struct Hashmap vertices_seen;
+        hashmap_create(&vertices_seen);
 
-	// These are to keep track of where we can write into for each material
-	int* mat_vertex_indices = malloc(mat_vertex_offsets_sz);
-	memcpy(mat_vertex_indices, mat_vertex_offsets, mat_vertex_offsets_sz);
+        for (int i = 0; i < mesh->face_count; i++) {
+                int face_verts = mesh->face_vertices[i];
+                for (int offset = 1; offset < face_verts - 1; offset++) {
+                        uint32_t tri_idx_idxs[3] = {index_idx_in, index_idx_in + offset, index_idx_in + offset + 1};
+                        for (int j = 0; j < 3; ++j) {
+                                fastObjIndex idx = mesh->indices[tri_idx_idxs[j]];
 
-	struct Vertex* vertices = malloc(vertex_ct * sizeof(vertices[0]));
-	uint32_t* indices = malloc(vertex_ct * sizeof(indices[0]));
+                                struct Vertex vertex;
+                                vertex.pos[0] = mesh->positions[3*idx.p+0];
+                                vertex.pos[1] = mesh->positions[3*idx.p+1];
+                                vertex.pos[2] = mesh->positions[3*idx.p+2];
+                                vertex.norm[0] = mesh->normals[3*idx.n+0];
+                                vertex.norm[1] = mesh->normals[3*idx.n+1];
+                                vertex.norm[2] = mesh->normals[3*idx.n+2];
+                                vertex.tex_c[0] = mesh->texcoords[2*idx.t+0];
+                                vertex.tex_c[1] = mesh->texcoords[2*idx.t+1];
 
-	uint32_t idx_out_idx = 0;
-	// Write to buffers
-	for (int i = 0; i < mesh->face_count; i++) {
-        	assert(mesh->face_vertices[i] == 3);
-        	uint32_t mat_idx = mesh->face_materials[i];
-        	for (int j = 0; j < 3; j++) {
-                	uint32_t v_idx = mesh->indices[3*i+j].p;
-                	uint32_t t_idx = mesh->indices[3*i+j].t;
-                	uint32_t vtx_out_idx = mat_vertex_indices[mat_idx];
-			vertices[vtx_out_idx].pos[0] = mesh->positions[3*v_idx+0];
-			vertices[vtx_out_idx].pos[1] = mesh->positions[3*v_idx+1];
-			vertices[vtx_out_idx].pos[2] = mesh->positions[3*v_idx+2];
-			vertices[vtx_out_idx].tex_c[0] = mesh->texcoords[2*t_idx+0];
-			vertices[vtx_out_idx].tex_c[1] = mesh->texcoords[2*t_idx+1];
-			indices[vtx_out_idx] = vtx_out_idx;
-			mat_vertex_indices[mat_idx]++;
-			idx_out_idx++;
-        	}
-	}
+        			uint32_t prev_idx;
+                                int found = hashmap_get(&vertices_seen, vertex_hash, vertex_compare, &vertex, &prev_idx);
+                                if (found) {
+                                        indices[index_idx_out++] = prev_idx;
+                                } else {
+                                        vertices[vertex_idx_out] = vertex;
+                                        indices[index_idx_out] = vertex_idx_out;
+                                        hashmap_insert(&vertices_seen, vertex_hash,
+                                                       &vertices[vertex_idx_out], vertex_idx_out);
+                                        vertex_idx_out++;
+                                        index_idx_out++;
+                                }
+                        }
+                }
 
-	free(mat_vertex_indices);
-	// Free mat_vertex_offsets, mat_vertex_ct later
+                index_idx_in += face_verts;
+        }
 
-	int material_ct = mesh->material_count;
+        uint32_t vertex_ct = vertex_idx_out;
+        uint32_t index_ct = index_idx_out;
+        printf("Ratio: %u / %u\n", vertex_ct, vertex_ct_bound);
 
         // Meshes
         struct Buffer vbuf, ibuf;
@@ -176,47 +189,6 @@ int main() {
 
         free(vertices);
         free(indices);
-
-        // Load textures
-	struct Image* textures = malloc(material_ct * sizeof(textures[0]));
-	for (int i = 0; i < material_ct; i++) {
-        	const char* path = mesh->materials[i].map_Kd.path;
-        	if (path == NULL) path = "assets/not_found.png";
-
-                int width, height;
-        	stbi_uc* pixels = load_tex(path, &width, &height);
-        	int tex_size = 4 * width * height;
-
-        	// Create source buffer
-        	struct Buffer tex_buf;
-        	buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        	              tex_size, &tex_buf);
-        	mem_write(base.device, tex_buf.mem, tex_size, pixels);
-        	stbi_image_free(pixels);
-
-        	// Create texture
-        	image_create(base.phys_dev, base.device, VK_FORMAT_R8G8B8A8_SRGB, width, height,
-        	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &textures[i]);
-
-        	// Copy to texture
-        	image_trans(base.device, base.queue, base.cpool, textures[i].handle, VK_IMAGE_ASPECT_COLOR_BIT,
-        	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
-        	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-
-        	image_copy_from_buffer(base.device, base.queue, base.cpool, VK_IMAGE_ASPECT_COLOR_BIT,
-        	                       tex_buf.handle, textures[i].handle, width, height);
-
-        	image_trans(base.device, base.queue, base.cpool, textures[i].handle, VK_IMAGE_ASPECT_COLOR_BIT,
-        	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-        	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-
-        	buffer_destroy(base.device, &tex_buf);
-	}
 
 	// Cleanup
 	fast_obj_destroy(mesh);
@@ -253,15 +225,21 @@ int main() {
         vtx_bind_desc.stride = sizeof(struct Vertex);
         vtx_bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-        VkVertexInputAttributeDescription vtx_attr_descs[2] = {0};
+        VkVertexInputAttributeDescription vtx_attr_descs[3] = {0};
         vtx_attr_descs[0].binding = 0;
         vtx_attr_descs[0].location = 0;
         vtx_attr_descs[0].format = VK_FORMAT_R32G32B32_SFLOAT;
         vtx_attr_descs[0].offset = offsetof(struct Vertex, pos);
+
         vtx_attr_descs[1].binding = 0;
         vtx_attr_descs[1].location = 1;
-        vtx_attr_descs[1].format = VK_FORMAT_R32G32_SFLOAT;
-        vtx_attr_descs[1].offset = offsetof(struct Vertex, tex_c);
+        vtx_attr_descs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        vtx_attr_descs[1].offset = offsetof(struct Vertex, norm);
+
+        vtx_attr_descs[2].binding = 0;
+        vtx_attr_descs[2].location = 2;
+        vtx_attr_descs[2].format = VK_FORMAT_R32G32_SFLOAT;
+        vtx_attr_descs[2].offset = offsetof(struct Vertex, tex_c);
 
         // Load shaders
         VkShaderModule vs = load_shader(base.device, "shaders/shader.vs.spv");
@@ -341,16 +319,8 @@ int main() {
         VkDescriptorSetLayout set_cam_layout;
         set_layout_create(base.device, 1, &set_cam_desc, &set_cam_layout);
 
-	VkDescriptorSetLayoutBinding set_tex_desc = {0};
-        set_tex_desc.binding = 0;
-        set_tex_desc.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        set_tex_desc.descriptorCount = 1;
-        set_tex_desc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        VkDescriptorSetLayout set_tex_layout;
-        set_layout_create(base.device, 1, &set_tex_desc, &set_tex_layout);
-
         // Pipeline layout
-	VkDescriptorSetLayout pipeline_set_layouts[] = {set_cam_layout, set_tex_layout};
+	VkDescriptorSetLayout pipeline_set_layouts[] = {set_cam_layout};
 
         VkPipelineLayoutCreateInfo pipeline_lt_info = {0};
         pipeline_lt_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -410,17 +380,15 @@ int main() {
         };
 
         // Descriptor pool
-        VkDescriptorPoolSize dpool_sizes[2] = {0};
+        VkDescriptorPoolSize dpool_sizes[1] = {0};
         dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES;
-        dpool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        dpool_sizes[1].descriptorCount = material_ct;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
         dpool_info.pPoolSizes = dpool_sizes;
-        dpool_info.maxSets = CONCURRENT_FRAMES + material_ct;
+        dpool_info.maxSets = CONCURRENT_FRAMES;
 
         VkDescriptorPool dpool;
         res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
@@ -438,19 +406,6 @@ int main() {
                 set_create(base.device, dpool, set_cam_layout,
                            1, &desc_cam, &sets_cam[i]);
         }
-
-        VkDescriptorSet* sets_tex = malloc(material_ct * sizeof(sets_tex[0]));
-	for (int i = 0; i < material_ct; i++) {
-                struct Descriptor desc_tex = {0};
-                desc_tex.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                desc_tex.binding = 0;
-                desc_tex.shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
-                desc_tex.image.sampler = tex_sampler;
-                desc_tex.image.imageView = textures[i].view;
-                desc_tex.image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                set_create(base.device, dpool, set_tex_layout,
-                           1, &desc_tex, &sets_tex[i]);
-	}
 
 	for (int i = 0; i < sizeof(pipeline_set_layouts) / sizeof(pipeline_set_layouts[0]); i++) {
                 vkDestroyDescriptorSetLayout(base.device, pipeline_set_layouts[i], NULL);
@@ -580,13 +535,7 @@ int main() {
 
                 vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
                                         0, 1, &sets_cam[frame_idx], 0, NULL);
-                for (int i = 0; i < material_ct; ++i) {
-                        vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
-                                                1, 1, &sets_tex[i], 0, NULL);
-                        int index_offset = mat_vertex_offsets[i];
-                        int index_ct = mat_vertex_ct[i];
-                        vkCmdDrawIndexed(cbuf, index_ct, 1, index_offset, 0, 0);
-                }
+                vkCmdDrawIndexed(cbuf, index_ct, 1, 0, 0, 0);
                 vkCmdEndRenderPass(cbuf);
 
                 res = vkEndCommandBuffer(cbuf);
@@ -656,7 +605,6 @@ int main() {
 
         swapchain_destroy(base.device, &swapchain);
 
-	//image_destroy(base.device, &tex_diffuse);
 	vkDestroySampler(base.device, tex_sampler, NULL);
 
         buffer_destroy(base.device, &vbuf);
@@ -666,8 +614,6 @@ int main() {
                 sync_set_destroy(base.device, &sync_sets[i]);
                 buffer_destroy(base.device, &ubufs[i]);
         }
-
-        for (int i = 0; i < material_ct; ++i) image_destroy(base.device, &textures[i]);
 
         for (int i = 0; i < swapchain.image_ct; i++) {
                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
