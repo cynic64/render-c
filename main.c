@@ -114,7 +114,10 @@ void depth_create(VkPhysicalDevice phys_dev, VkDevice device,
 	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, image);
 }
 
-int main() {
+int main(int argc, char** argv) {
+        assert(argc == 2);
+        const char* mesh_path = argv[1];
+
         // GLFW
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -125,7 +128,7 @@ int main() {
         base_create(window, VALIDATION_ON, INSTANCE_EXT_CT, INSTANCE_EXTS, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
         // Load model
-        fastObjMesh* mesh = fast_obj_read("assets/models/gallery/gallery.obj");
+        fastObjMesh* mesh = fast_obj_read(mesh_path);
         printf("Mesh has %u materials\n", mesh->material_count);
 
         // One object per material
@@ -269,7 +272,12 @@ int main() {
 
                 int width, height;
         	stbi_uc* pixels = load_tex(path, &width, &height);
+        	if (pixels == NULL) {
+                	fprintf(stderr, "Could not load %s!\n", path);
+                	pixels = load_tex("assets/not_found.png", &width, &height);
+        	}
         	int tex_size = 4 * width * height;
+        	printf("Allocate %d bytes for '%s' (%dx%d)\n", tex_size, path, width, height);
 
         	// Create source buffer
         	struct Buffer tex_buf;
