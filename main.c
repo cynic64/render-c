@@ -1,6 +1,7 @@
 #include "external/cglm/include/cglm/cglm.h"
 #define STBI_ONLY_TGA
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
 #define STBI_FAILURE_USERMSG
 #define STB_IMAGE_IMPLEMENTATION
 #include "external/stb_image/stb_image.h"
@@ -124,29 +125,55 @@ int main() {
         base_create(window, VALIDATION_ON, INSTANCE_EXT_CT, INSTANCE_EXTS, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
         // Load model
-        fastObjMesh* mesh = fast_obj_read("assets/models/sponza/sponza.obj");
+        fastObjMesh* mesh = fast_obj_read("assets/models/gallery/gallery.obj");
         printf("Mesh has %u materials\n", mesh->material_count);
 
+        // One object per material
+        uint32_t object_ct = mesh->material_count;
+        struct Object* objects = malloc(object_ct * sizeof(objects[0]));
+        for (int i = 0; i < object_ct; i++) objects[i].index_ct = 0;
+
+        // Fill in index counts for each material
+        for (int i = 0; i < mesh->face_count; i++) {
+                int mat_idx = mesh->face_materials[i];
+                int num_tris = mesh->face_vertices[i] - 2;
+                objects[mat_idx].index_ct += 3 * num_tris;
+        }
+
+        // Fill in index offsets for each material
+        uint32_t object_idx_offset = 0;
+        for (int i = 0; i < object_ct; i++) {
+                objects[i].index_offset = object_idx_offset;
+                object_idx_offset += objects[i].index_ct;
+        }
+
+	// Read vertices and fill in indices
         uint32_t vertex_ct_bound = 0;
         for (int i = 0; i < mesh->face_count; i++) vertex_ct_bound += 3 * (mesh->face_vertices[i] - 2);
-        uint32_t index_ct_bound = vertex_ct_bound;
+        uint32_t index_ct = vertex_ct_bound;
 
         struct Vertex* const vertices = malloc(vertex_ct_bound * sizeof(vertices[0]));
-        uint32_t* const indices = malloc(index_ct_bound * sizeof(indices[0]));
+        uint32_t* const indices = malloc(index_ct * sizeof(indices[0]));
 
         uint32_t vertex_idx_out = 0;
-        uint32_t index_idx_out = 0;
         uint32_t index_idx_in = 0;
+
+        // Where we output the index to depends on what the current face's material is,
+        // so we need to know what the next index index in each object is
+        uint32_t* object_idx_outs = malloc(object_ct * sizeof(object_idx_outs[0]));
+        for (int i = 0; i < object_ct; i++) object_idx_outs[i] = objects[i].index_offset;
 
         struct Hashmap vertices_seen;
         hashmap_create(&vertices_seen);
 
         for (int i = 0; i < mesh->face_count; i++) {
                 int face_verts = mesh->face_vertices[i];
+                int mat_idx = mesh->face_materials[i];
                 for (int offset = 1; offset < face_verts - 1; offset++) {
                         uint32_t tri_idx_idxs[3] = {index_idx_in, index_idx_in + offset, index_idx_in + offset + 1};
                         for (int j = 0; j < 3; ++j) {
                                 fastObjIndex idx = mesh->indices[tri_idx_idxs[j]];
+                                uint32_t index_idx_out = object_idx_outs[mat_idx];
 
                                 struct Vertex vertex;
                                 vertex.pos[0] = mesh->positions[3*idx.p+0];
@@ -161,23 +188,22 @@ int main() {
         			uint32_t prev_idx;
                                 int found = hashmap_get(&vertices_seen, vertex_hash, vertex_compare, &vertex, &prev_idx);
                                 if (found) {
-                                        indices[index_idx_out++] = prev_idx;
+                                        indices[index_idx_out] = prev_idx;
                                 } else {
                                         vertices[vertex_idx_out] = vertex;
                                         indices[index_idx_out] = vertex_idx_out;
                                         hashmap_insert(&vertices_seen, vertex_hash,
                                                        &vertices[vertex_idx_out], vertex_idx_out);
                                         vertex_idx_out++;
-                                        index_idx_out++;
                                 }
+
+                                object_idx_outs[mat_idx]++;
                         }
                 }
-
                 index_idx_in += face_verts;
         }
 
         uint32_t vertex_ct = vertex_idx_out;
-        uint32_t index_ct = index_idx_out;
         printf("Ratio: %u / %u\n", vertex_ct, vertex_ct_bound);
 
         // Meshes
@@ -186,12 +212,6 @@ int main() {
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_ct * sizeof(vertices[0]), vertices, &vbuf);
         buffer_staged(base.phys_dev, base.device, base.queue, base.cpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, index_ct * sizeof(indices[0]), indices, &ibuf);
-
-        free(vertices);
-        free(indices);
-
-	// Cleanup
-	fast_obj_destroy(mesh);
 
 	// Create sampler
 	VkPhysicalDeviceProperties phys_dev_props;
@@ -214,6 +234,89 @@ int main() {
 	VkSampler tex_sampler;
 	VkResult res = vkCreateSampler(base.device, &sampler_info, NULL, &tex_sampler);
 	assert(res == VK_SUCCESS);
+
+        // Descriptor pool
+        VkDescriptorPoolSize dpool_sizes[2] = {0};
+        dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES;
+        dpool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        dpool_sizes[1].descriptorCount = object_ct;
+
+        VkDescriptorPoolCreateInfo dpool_info = {0};
+        dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
+        dpool_info.pPoolSizes = dpool_sizes;
+        dpool_info.maxSets = CONCURRENT_FRAMES + object_ct;
+
+        VkDescriptorPool dpool;
+        res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
+        assert(res == VK_SUCCESS);
+
+        // Load textures and create texture set for each object
+       	VkDescriptorSetLayoutBinding set_tex_desc = {0};
+        set_tex_desc.binding = 0;
+        set_tex_desc.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        set_tex_desc.descriptorCount = 1;
+        set_tex_desc.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayout set_tex_layout;
+        set_layout_create(base.device, 1, &set_tex_desc, &set_tex_layout);
+
+	struct Image* textures = malloc(object_ct * sizeof(textures[0]));
+	for (int i = 0; i < object_ct; i++) {
+        	// Load texture
+        	const char* path = mesh->materials[i].map_Kd.path;
+        	if (path == NULL) path = "assets/not_found.png";
+
+                int width, height;
+        	stbi_uc* pixels = load_tex(path, &width, &height);
+        	int tex_size = 4 * width * height;
+
+        	// Create source buffer
+        	struct Buffer tex_buf;
+        	buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        	              tex_size, &tex_buf);
+        	mem_write(base.device, tex_buf.mem, tex_size, pixels);
+        	stbi_image_free(pixels);
+
+        	// Create texture
+        	image_create(base.phys_dev, base.device, VK_FORMAT_R8G8B8A8_SRGB, width, height,
+        	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &textures[i]);
+
+        	// Copy to texture
+        	image_trans(base.device, base.queue, base.cpool, textures[i].handle, VK_IMAGE_ASPECT_COLOR_BIT,
+        	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
+        	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+        	image_copy_from_buffer(base.device, base.queue, base.cpool, VK_IMAGE_ASPECT_COLOR_BIT,
+        	                       tex_buf.handle, textures[i].handle, width, height);
+
+        	image_trans(base.device, base.queue, base.cpool, textures[i].handle, VK_IMAGE_ASPECT_COLOR_BIT,
+        	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
+        	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+
+        	buffer_destroy(base.device, &tex_buf);
+
+        	// Create set
+                struct Descriptor desc_tex = {0};
+                desc_tex.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                desc_tex.binding = 0;
+                desc_tex.shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
+                desc_tex.image.sampler = tex_sampler;
+                desc_tex.image.imageView = textures[i].view;
+                desc_tex.image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+                set_create(base.device, dpool, set_tex_layout,
+                           1, &desc_tex, &objects[i].tex_set);
+	}
+
+	// Cleanup
+	fast_obj_destroy(mesh);
+        free(vertices);
+        free(indices);
 
         // Swapchain
         struct Swapchain swapchain;
@@ -320,7 +423,7 @@ int main() {
         set_layout_create(base.device, 1, &set_cam_desc, &set_cam_layout);
 
         // Pipeline layout
-	VkDescriptorSetLayout pipeline_set_layouts[] = {set_cam_layout};
+	VkDescriptorSetLayout pipeline_set_layouts[] = {set_cam_layout, set_tex_layout};
 
         VkPipelineLayoutCreateInfo pipeline_lt_info = {0};
         pipeline_lt_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -378,21 +481,6 @@ int main() {
                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
                               sizeof(struct Uniform), &ubufs[i]);
         };
-
-        // Descriptor pool
-        VkDescriptorPoolSize dpool_sizes[1] = {0};
-        dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES;
-
-        VkDescriptorPoolCreateInfo dpool_info = {0};
-        dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-        dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
-        dpool_info.pPoolSizes = dpool_sizes;
-        dpool_info.maxSets = CONCURRENT_FRAMES;
-
-        VkDescriptorPool dpool;
-        res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
-        assert(res == VK_SUCCESS);
 
         // Sets
         VkDescriptorSet sets_cam[CONCURRENT_FRAMES];
@@ -470,8 +558,8 @@ int main() {
                 clock_gettime(CLOCK_MONOTONIC_RAW, &time);
                 double elapsed = (double) ((time.tv_sec * 1000000000 + time.tv_nsec)
                                          - (start_time.tv_sec * 1000000000 + start_time.tv_nsec)) / 1000000000.0F;
-                vec3 eye = {2.0F * sin(elapsed * 0.2), 0.5F, 2.0F * cos(elapsed * 0.2)};
-                vec3 looking_at = {0.0F, 0.0F, 0.0F};
+                vec3 eye = {2.0F * sin(elapsed * 0.2), 1.5F, 2.0F * cos(elapsed * 0.2)};
+                vec3 looking_at = {0.0F, 1.0F, 0.0F};
 
                 struct Uniform uni_data;
                 glm_mat4_identity(uni_data.model);
@@ -535,7 +623,11 @@ int main() {
 
                 vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
                                         0, 1, &sets_cam[frame_idx], 0, NULL);
-                vkCmdDrawIndexed(cbuf, index_ct, 1, 0, 0, 0);
+                for (int i = 0; i < object_ct; i++) {
+                        vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
+                                                1, 1, &objects[i].tex_set, 0, NULL);
+                        vkCmdDrawIndexed(cbuf, objects[i].index_ct, 1, objects[i].index_offset, 0, 0);
+                }
                 vkCmdEndRenderPass(cbuf);
 
                 res = vkEndCommandBuffer(cbuf);
@@ -619,6 +711,8 @@ int main() {
                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
                 image_destroy(base.device, &depth_images[i]);
         }
+
+        for (int i = 0; i < object_ct; i++) image_destroy(base.device, &textures[i]);
 
         vkDestroyDescriptorPool(base.device, dpool, NULL);
 

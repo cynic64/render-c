@@ -5,5 +5,5 @@ Ks 0 0 0
 d 1
 Ns 0
 illum 1
-map_Kd -bm 0.7 gallery.jpg
-map_Ke -bm 0.3 gallery.jpg
+map_Kd gallery.jpg
+map_Ke gallery.jpg

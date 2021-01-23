@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 #include "cbuf.h"
+#include "check_vk.h"
 #include "mem.h"
 
 #include <assert.h>
@@ -23,7 +24,7 @@ void buffer_handle_create(VkDevice device, VkBufferUsageFlags usage, VkDeviceSiz
         info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
         VkResult res = vkCreateBuffer(device, &info, NULL, buf);
-        assert(res == VK_SUCCESS);
+        check_vk("Could not create buffer handle!", res);
 }
 
 void buffer_create(VkPhysicalDevice phys_dev, VkDevice device,
