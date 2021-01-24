@@ -12,6 +12,8 @@
 #include <vulkan/vulkan.h>
 
 #include "src/obj.h"
+#include "src/texture.h"
+#include "src/timer.h"
 
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
@@ -26,8 +28,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
-#include <math.h>
 
 const int INSTANCE_EXT_CT = 1;
 const char* INSTANCE_EXTS[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
@@ -83,12 +83,6 @@ void sync_set_destroy(VkDevice device, struct SyncSet* sync_set) {
 	vkDestroySemaphore(device, sync_set->render_sem, NULL);
 }
 
-// Allocates own memory, call stbi_image_free afterwards
-stbi_uc* load_tex(const char* path, int* width, int* height) {
-	int channels;
-        return stbi_load(path, width, height, &channels, STBI_rgb_alpha);
-}
-
 void depth_create(VkPhysicalDevice phys_dev, VkDevice device,
                   VkFormat format, uint32_t width, uint32_t height, struct Image* image)
 {
@@ -102,6 +96,8 @@ int main(int argc, char** argv) {
         assert(argc == 2);
         const char* mesh_path = argv[1];
 
+        struct timespec time_prog_start = timer_start();
+
         // GLFW
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -113,6 +109,7 @@ int main(int argc, char** argv) {
 
         // Load model
         fastObjMesh* model = fast_obj_read(mesh_path);
+        assert(model != NULL);
         uint32_t vertex_ct, index_ct, mesh_ct;
         obj_convert_model(model, &vertex_ct, NULL, &index_ct, NULL, &mesh_ct, NULL);
 
@@ -140,12 +137,17 @@ int main(int argc, char** argv) {
         free(vertices_raw);
         free(meshes_raw);
 
+        printf("[%.3fs] Loaded mesh (%u vertices, %u indices)\n",
+               timer_get_elapsed(&time_prog_start), vertex_ct, index_ct);
+
         // Vertex/index buffer
         struct Buffer vbuf, ibuf;
         buffer_staged(base.phys_dev, base.device, base.queue, base.cpool, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_ct * sizeof(vertices[0]), vertices, &vbuf);
         buffer_staged(base.phys_dev, base.device, base.queue, base.cpool, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, index_ct * sizeof(indices[0]), indices, &ibuf);
+
+        printf("[%.3fs] Copied mesh to GPU\n", timer_get_elapsed(&time_prog_start));
 
 	// Create sampler
 	VkPhysicalDeviceProperties phys_dev_props;
@@ -197,60 +199,13 @@ int main(int argc, char** argv) {
 
 	struct Image* textures = malloc(mesh_ct * sizeof(textures[0]));
 	for (int i = 0; i < mesh_ct; i++) {
-        	// Load texture
         	const char* path = model->materials[i].map_Kd.path;
-        	if (path == NULL) path = "assets/not_found.png";
+        	if (path == NULL) path = TEXTURE_FALLBACK_PATH;
+        	texture_set_from_path(base.phys_dev, base.device, base.queue, base.cpool, dpool, tex_sampler,
+                                      set_tex_layout, path, &textures[i], &meshes[i].set);
+	};
 
-                int width, height;
-        	stbi_uc* pixels = load_tex(path, &width, &height);
-        	if (pixels == NULL) {
-                	fprintf(stderr, "Could not load %s!\n", path);
-                	pixels = load_tex("assets/not_found.png", &width, &height);
-        	}
-        	int tex_size = 4 * width * height;
-        	printf("Allocate %d bytes for '%s' (%dx%d)\n", tex_size, path, width, height);
-
-        	// Create source buffer
-        	struct Buffer tex_buf;
-        	buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-        	              tex_size, &tex_buf);
-        	mem_write(base.device, tex_buf.mem, tex_size, pixels);
-        	stbi_image_free(pixels);
-
-        	// Create texture
-        	image_create(base.phys_dev, base.device, VK_FORMAT_R8G8B8A8_SRGB, width, height,
-        	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                             VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        		     VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT, &textures[i]);
-
-        	// Copy to texture
-        	image_trans(base.device, base.queue, base.cpool, textures[i].handle, VK_IMAGE_ASPECT_COLOR_BIT,
-        	            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        	            0, VK_ACCESS_TRANSFER_WRITE_BIT,
-        	            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-
-        	image_copy_from_buffer(base.device, base.queue, base.cpool, VK_IMAGE_ASPECT_COLOR_BIT,
-        	                       tex_buf.handle, textures[i].handle, width, height);
-
-        	image_trans(base.device, base.queue, base.cpool, textures[i].handle, VK_IMAGE_ASPECT_COLOR_BIT,
-        	            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-        	            VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT,
-        	            VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
-
-        	buffer_destroy(base.device, &tex_buf);
-
-        	// Create set
-                struct Descriptor desc_tex = {0};
-                desc_tex.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-                desc_tex.binding = 0;
-                desc_tex.shader_stage_flags = VK_SHADER_STAGE_FRAGMENT_BIT;
-                desc_tex.image.sampler = tex_sampler;
-                desc_tex.image.imageView = textures[i].view;
-                desc_tex.image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-                set_create(base.device, dpool, set_tex_layout,
-                           1, &desc_tex, &meshes[i].set);
-	}
+        printf("[%.3fs] Loaded textures\n", timer_get_elapsed(&time_prog_start));
 
 	// Cleanup
 	fast_obj_destroy(model);
@@ -442,10 +397,11 @@ int main(int argc, char** argv) {
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
         for (int i = 0; i < swapchain.image_ct; i++) image_fences[i] = VK_NULL_HANDLE;
 
+        printf("[%.3fs] Begin main loop\n", timer_get_elapsed(&time_prog_start));
+
         // Main loop
         int frame_ct = 0;
-        struct timespec start_time;
-        clock_gettime(CLOCK_MONOTONIC_RAW, &start_time);
+        struct timespec start_time = timer_start();
         int must_recreate = 0;
 
         while (!glfwWindowShouldClose(window)) {
@@ -493,10 +449,7 @@ int main(int argc, char** argv) {
                 VkCommandBuffer cbuf = cbufs[frame_idx];
 
                 // Write to ubuf
-                struct timespec time;
-                clock_gettime(CLOCK_MONOTONIC_RAW, &time);
-                double elapsed = (double) ((time.tv_sec * 1000000000 + time.tv_nsec)
-                                         - (start_time.tv_sec * 1000000000 + start_time.tv_nsec)) / 1000000000.0F;
+                double elapsed = timer_get_elapsed(&start_time);
                 vec3 eye = {2.0F * sin(elapsed * 0.2), 1.5F, 2.0F * cos(elapsed * 0.2)};
                 vec3 looking_at = {0.0F, 1.0F, 0.0F};
 
@@ -615,10 +568,7 @@ int main(int argc, char** argv) {
                 frame_ct++;
         }
 
-        struct timespec stop_time;
-        clock_gettime(CLOCK_MONOTONIC_RAW, &stop_time);
-        double elapsed = (double) ((stop_time.tv_sec * 1000000000 + stop_time.tv_nsec)
-                                 - (start_time.tv_sec * 1000000000 + start_time.tv_nsec)) / 1000000000.0F;
+	double elapsed = timer_get_elapsed(&start_time);
         double fps = (double) frame_ct / elapsed;
         printf("FPS: %.2f\n", fps);
 

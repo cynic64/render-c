@@ -47,15 +47,15 @@ void obj_convert_model(fastObjMesh* model,
                        uint32_t* mesh_ct, struct ObjMesh* meshes)
 {
         // Establish counts, maybe return early
-        uint32_t vertex_ct_bound = 0;
-        for (int i = 0; i < model->face_count; i++) vertex_ct_bound += 3 * (model->face_vertices[i] - 2);
-        *index_ct = vertex_ct_bound;
+        *index_ct = 0;
+        for (int i = 0; i < model->face_count; i++) {
+                int num_tris = model->face_vertices[i] - 2;
+                *index_ct += 3 * num_tris;
+        }
+        *vertex_ct = *index_ct;
         *mesh_ct = model->material_count;
 
-        if (vertices == NULL || indices == NULL || meshes == NULL) {
-                *vertex_ct = vertex_ct_bound;
-                return;
-        }
+        if (vertices == NULL || indices == NULL || meshes == NULL) return;
 
         // Fill in index counts for each material
         for (int i = 0; i < *mesh_ct; i++) meshes[i].index_ct = 0;
