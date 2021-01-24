@@ -11,7 +11,7 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
-#include "src/hashmap.h"
+#include "src/obj.h"
 
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
@@ -65,27 +65,11 @@ struct SyncSet {
         VkSemaphore render_sem;
 };
 
-struct Object {
+struct Mesh {
         uint32_t index_offset;
         uint32_t index_ct;
-        VkDescriptorSet tex_set;
+        VkDescriptorSet set;
 };
-
-uint32_t vertex_hash(uint32_t bucket_ct, const void* key) {
-        const uint8_t* bytes = key;
-
-	uint32_t hash = 0;
-	for (int i = 0; i < sizeof(struct Vertex); i++) {
-        	hash ^= hash << 5;
-        	hash += bytes[i];
-	}
-
-	return hash % bucket_ct;
-}
-
-int vertex_compare(const void* a, const void* b) {
-        return memcmp(a, b, sizeof(struct Vertex));
-}
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
         fence_create(device, VK_FENCE_CREATE_SIGNALED_BIT, &sync_set->render_fence);
@@ -128,88 +112,35 @@ int main(int argc, char** argv) {
         base_create(window, VALIDATION_ON, INSTANCE_EXT_CT, INSTANCE_EXTS, DEVICE_EXT_CT, DEVICE_EXTS, &base);
 
         // Load model
-        fastObjMesh* mesh = fast_obj_read(mesh_path);
-        printf("Mesh has %u materials\n", mesh->material_count);
+        fastObjMesh* model = fast_obj_read(mesh_path);
+        uint32_t vertex_ct, index_ct, mesh_ct;
+        obj_convert_model(model, &vertex_ct, NULL, &index_ct, NULL, &mesh_ct, NULL);
 
-        // One object per material
-        uint32_t object_ct = mesh->material_count;
-        struct Object* objects = malloc(object_ct * sizeof(objects[0]));
-        for (int i = 0; i < object_ct; i++) objects[i].index_ct = 0;
+        struct ObjVertex* vertices_raw = malloc(vertex_ct * sizeof(vertices_raw[0]));
+        uint32_t* indices = malloc(index_ct * sizeof(indices[0]));
+        struct ObjMesh* meshes_raw = malloc(mesh_ct * sizeof(meshes_raw[0]));
+        obj_convert_model(model, &vertex_ct, vertices_raw, &index_ct, indices, &mesh_ct, meshes_raw);
 
-        // Fill in index counts for each material
-        for (int i = 0; i < mesh->face_count; i++) {
-                int mat_idx = mesh->face_materials[i];
-                int num_tris = mesh->face_vertices[i] - 2;
-                objects[mat_idx].index_ct += 3 * num_tris;
+        struct Vertex* vertices = malloc(vertex_ct * sizeof(vertices[0]));
+        struct Mesh* meshes = malloc(mesh_ct * sizeof(meshes[0]));
+        for (int i = 0; i < vertex_ct; i++) {
+                vertices[i].pos[0] = vertices_raw[i].pos[0];
+                vertices[i].pos[1] = vertices_raw[i].pos[1];
+                vertices[i].pos[2] = vertices_raw[i].pos[2];
+                vertices[i].norm[0] = vertices_raw[i].norm[0];
+                vertices[i].norm[1] = vertices_raw[i].norm[1];
+                vertices[i].norm[2] = vertices_raw[i].norm[2];
+                vertices[i].tex_c[0] = vertices_raw[i].tex_c[0];
+                vertices[i].tex_c[1] = vertices_raw[i].tex_c[1];
         }
-
-        // Fill in index offsets for each material
-        uint32_t object_idx_offset = 0;
-        for (int i = 0; i < object_ct; i++) {
-                objects[i].index_offset = object_idx_offset;
-                object_idx_offset += objects[i].index_ct;
+        for (int i = 0; i < mesh_ct; i++) {
+                meshes[i].index_offset = meshes_raw[i].index_offset;
+                meshes[i].index_ct = meshes_raw[i].index_ct;
         }
+        free(vertices_raw);
+        free(meshes_raw);
 
-	// Read vertices and fill in indices
-        uint32_t vertex_ct_bound = 0;
-        for (int i = 0; i < mesh->face_count; i++) vertex_ct_bound += 3 * (mesh->face_vertices[i] - 2);
-        uint32_t index_ct = vertex_ct_bound;
-
-        struct Vertex* const vertices = malloc(vertex_ct_bound * sizeof(vertices[0]));
-        uint32_t* const indices = malloc(index_ct * sizeof(indices[0]));
-
-        uint32_t vertex_idx_out = 0;
-        uint32_t index_idx_in = 0;
-
-        // Where we output the index to depends on what the current face's material is,
-        // so we need to know what the next index index in each object is
-        uint32_t* object_idx_outs = malloc(object_ct * sizeof(object_idx_outs[0]));
-        for (int i = 0; i < object_ct; i++) object_idx_outs[i] = objects[i].index_offset;
-
-        struct Hashmap vertices_seen;
-        hashmap_create(&vertices_seen);
-
-        for (int i = 0; i < mesh->face_count; i++) {
-                int face_verts = mesh->face_vertices[i];
-                int mat_idx = mesh->face_materials[i];
-                for (int offset = 1; offset < face_verts - 1; offset++) {
-                        uint32_t tri_idx_idxs[3] = {index_idx_in, index_idx_in + offset, index_idx_in + offset + 1};
-                        for (int j = 0; j < 3; ++j) {
-                                fastObjIndex idx = mesh->indices[tri_idx_idxs[j]];
-                                uint32_t index_idx_out = object_idx_outs[mat_idx];
-
-                                struct Vertex vertex;
-                                vertex.pos[0] = mesh->positions[3*idx.p+0];
-                                vertex.pos[1] = mesh->positions[3*idx.p+1];
-                                vertex.pos[2] = mesh->positions[3*idx.p+2];
-                                vertex.norm[0] = mesh->normals[3*idx.n+0];
-                                vertex.norm[1] = mesh->normals[3*idx.n+1];
-                                vertex.norm[2] = mesh->normals[3*idx.n+2];
-                                vertex.tex_c[0] = mesh->texcoords[2*idx.t+0];
-                                vertex.tex_c[1] = mesh->texcoords[2*idx.t+1];
-
-        			uint32_t prev_idx;
-                                int found = hashmap_get(&vertices_seen, vertex_hash, vertex_compare, &vertex, &prev_idx);
-                                if (found) {
-                                        indices[index_idx_out] = prev_idx;
-                                } else {
-                                        vertices[vertex_idx_out] = vertex;
-                                        indices[index_idx_out] = vertex_idx_out;
-                                        hashmap_insert(&vertices_seen, vertex_hash,
-                                                       &vertices[vertex_idx_out], vertex_idx_out);
-                                        vertex_idx_out++;
-                                }
-
-                                object_idx_outs[mat_idx]++;
-                        }
-                }
-                index_idx_in += face_verts;
-        }
-
-        uint32_t vertex_ct = vertex_idx_out;
-        printf("Ratio: %u / %u\n", vertex_ct, vertex_ct_bound);
-
-        // Meshes
+        // Vertex/index buffer
         struct Buffer vbuf, ibuf;
         buffer_staged(base.phys_dev, base.device, base.queue, base.cpool, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_ct * sizeof(vertices[0]), vertices, &vbuf);
@@ -243,13 +174,13 @@ int main(int argc, char** argv) {
         dpool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         dpool_sizes[0].descriptorCount = CONCURRENT_FRAMES;
         dpool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        dpool_sizes[1].descriptorCount = object_ct;
+        dpool_sizes[1].descriptorCount = mesh_ct;
 
         VkDescriptorPoolCreateInfo dpool_info = {0};
         dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
         dpool_info.poolSizeCount = sizeof(dpool_sizes) / sizeof(dpool_sizes[0]);
         dpool_info.pPoolSizes = dpool_sizes;
-        dpool_info.maxSets = CONCURRENT_FRAMES + object_ct;
+        dpool_info.maxSets = CONCURRENT_FRAMES + mesh_ct;
 
         VkDescriptorPool dpool;
         res = vkCreateDescriptorPool(base.device, &dpool_info, NULL, &dpool);
@@ -264,10 +195,10 @@ int main(int argc, char** argv) {
         VkDescriptorSetLayout set_tex_layout;
         set_layout_create(base.device, 1, &set_tex_desc, &set_tex_layout);
 
-	struct Image* textures = malloc(object_ct * sizeof(textures[0]));
-	for (int i = 0; i < object_ct; i++) {
+	struct Image* textures = malloc(mesh_ct * sizeof(textures[0]));
+	for (int i = 0; i < mesh_ct; i++) {
         	// Load texture
-        	const char* path = mesh->materials[i].map_Kd.path;
+        	const char* path = model->materials[i].map_Kd.path;
         	if (path == NULL) path = "assets/not_found.png";
 
                 int width, height;
@@ -318,11 +249,11 @@ int main(int argc, char** argv) {
                 desc_tex.image.imageView = textures[i].view;
                 desc_tex.image.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
                 set_create(base.device, dpool, set_tex_layout,
-                           1, &desc_tex, &objects[i].tex_set);
+                           1, &desc_tex, &meshes[i].set);
 	}
 
 	// Cleanup
-	fast_obj_destroy(mesh);
+	fast_obj_destroy(model);
         free(vertices);
         free(indices);
 
@@ -631,10 +562,10 @@ int main(int argc, char** argv) {
 
                 vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
                                         0, 1, &sets_cam[frame_idx], 0, NULL);
-                for (int i = 0; i < object_ct; i++) {
+                for (int i = 0; i < mesh_ct; i++) {
                         vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
-                                                1, 1, &objects[i].tex_set, 0, NULL);
-                        vkCmdDrawIndexed(cbuf, objects[i].index_ct, 1, objects[i].index_offset, 0, 0);
+                                                1, 1, &meshes[i].set, 0, NULL);
+                        vkCmdDrawIndexed(cbuf, meshes[i].index_ct, 1, meshes[i].index_offset, 0, 0);
                 }
                 vkCmdEndRenderPass(cbuf);
 
@@ -720,7 +651,7 @@ int main(int argc, char** argv) {
                 image_destroy(base.device, &depth_images[i]);
         }
 
-        for (int i = 0; i < object_ct; i++) image_destroy(base.device, &textures[i]);
+        for (int i = 0; i < mesh_ct; i++) image_destroy(base.device, &textures[i]);
 
         vkDestroyDescriptorPool(base.device, dpool, NULL);
 
@@ -732,4 +663,6 @@ int main(int argc, char** argv) {
 	free(framebuffers);
 	free(image_fences);
 	free(depth_images);
+	free(textures);
+	free(meshes);
 }
