@@ -37,7 +37,7 @@ void check_vk(const char* message, VkResult result) {
         exit(1);
 }
 #else
-void check_vk(const char*, VkResult) {}
+void check_vk(const char* message, VkResult result) {}
 #endif
 
 #endif // LL_CHECK_VK

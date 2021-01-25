@@ -89,7 +89,7 @@ void depth_create(VkPhysicalDevice phys_dev, VkDevice device,
 	image_create(phys_dev, device, format, width, height,
 	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 	             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, image);
+	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, 1, image);
 }
 
 int main(int argc, char** argv) {
@@ -166,6 +166,7 @@ int main(int argc, char** argv) {
 	sampler_info.unnormalizedCoordinates = VK_FALSE;
 	sampler_info.compareEnable = VK_FALSE;
 	sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	sampler_info.maxLod = 1000.0f;
 
 	VkSampler tex_sampler;
 	VkResult res = vkCreateSampler(base.device, &sampler_info, NULL, &tex_sampler);

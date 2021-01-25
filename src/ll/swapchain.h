@@ -55,7 +55,7 @@ void swapchain_create(VkSurfaceKHR surface, VkPhysicalDevice phys_dev, VkDevice 
         const uint32_t chosen_image_ct = surface_caps.maxImageCount > 0 ?
                 surface_caps.maxImageCount : surface_caps.minImageCount;
 
-        // Create sc
+        // Create swapchain
         VkSwapchainCreateInfoKHR sc_info = {0};
         sc_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         sc_info.surface = surface;

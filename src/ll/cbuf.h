@@ -35,5 +35,28 @@ void cbuf_submit_wait(VkQueue queue, VkCommandBuffer cbuf) {
         vkQueueWaitIdle(queue);
 }
 
+void cbuf_barrier_image(VkCommandBuffer cbuf, VkImage image, VkImageAspectFlags aspect,
+                        uint32_t mip_level_ct, uint32_t mip_level_base,
+                        VkImageLayout old_layout, VkImageLayout new_layout,
+                        VkAccessFlags src_access, VkAccessFlags dst_access,
+                        VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage)
+{
+	VkImageMemoryBarrier barrier = {0};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.image = image;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.subresourceRange.aspectMask = aspect;
+	barrier.subresourceRange.baseArrayLayer = 0;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.subresourceRange.levelCount = mip_level_ct;
+	barrier.subresourceRange.baseMipLevel = mip_level_base;
+	barrier.oldLayout = old_layout;
+	barrier.newLayout = new_layout;
+	barrier.srcAccessMask = src_access;
+	barrier.dstAccessMask = dst_access;
+	vkCmdPipelineBarrier(cbuf, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
+}
+
 #endif // LL_CBUF_H
 
