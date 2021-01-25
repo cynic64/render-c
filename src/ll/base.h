@@ -212,6 +212,11 @@ void base_create(GLFWwindow* window,
 
         res = vkCreateCommandPool(base->device, &cpool_info, NULL, &base->cpool);
         assert(res == VK_SUCCESS);
+
+        // Make sure we have linear filtering support
+        VkFormatProperties dev_format_props;
+        vkGetPhysicalDeviceFormatProperties(base->phys_dev, VK_FORMAT_B8G8R8A8_SRGB, &dev_format_props);
+        assert(dev_format_props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
 }
 
 void base_destroy(struct Base* base) {
