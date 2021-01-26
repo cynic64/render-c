@@ -290,10 +290,13 @@ int main(int argc, char** argv) {
         VkSubpassDependency subpass_dep = {0};
         subpass_dep.srcSubpass = VK_SUBPASS_EXTERNAL;
         subpass_dep.dstSubpass = 0;
-        subpass_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+        subpass_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+        	                 | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
         subpass_dep.srcAccessMask = 0;
-        subpass_dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-        subpass_dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        subpass_dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+        	                 | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        subpass_dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                                  | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
         VkRenderPassCreateInfo rpass_info = {0};
         rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
@@ -347,16 +350,14 @@ int main(int argc, char** argv) {
 	                sizeof(shaders) / sizeof(shaders[0]), shaders, &vertex_info,
 	                pipeline_lt, rpass, 0, &pipeline);
 
-	// Depth buffers
-	struct Image* depth_images = malloc(swapchain.image_ct * sizeof(depth_images[0]));
-	for (int i = 0; i < swapchain.image_ct; i++) {
-        	depth_create(base.phys_dev, base.device, DEPTH_FORMAT, swapchain.width, swapchain.height, &depth_images[i]);
-	};
+	// Depth buffer
+	struct Image depth_image;
+	depth_create(base.phys_dev, base.device, DEPTH_FORMAT, swapchain.width, swapchain.height, &depth_image);
 
         // Framebuffers
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
         for (int i = 0; i < swapchain.image_ct; i++) {
-                VkImageView views[] = {swapchain.views[i], depth_images[i].view};
+                VkImageView views[] = {swapchain.views[i], depth_image.view};
                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
                                    sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
         }
@@ -424,14 +425,14 @@ int main(int argc, char** argv) {
                                 sync_set_create(base.device, &sync_sets[i]);
                         }
 
+                        image_destroy(base.device, &depth_image);
+                        depth_create(base.phys_dev, base.device, DEPTH_FORMAT,
+                                     swapchain.width, swapchain.height, &depth_image);
+
                         for (int i = 0; i < swapchain.image_ct; i++) {
                                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
 
-                                image_destroy(base.device, &depth_images[i]);
-                                depth_create(base.phys_dev, base.device, DEPTH_FORMAT,
-                                             swapchain.width, swapchain.height, &depth_images[i]);
-
-                                VkImageView new_framebuffer_views[] = {swapchain.views[i], depth_images[i].view};
+                                VkImageView new_framebuffer_views[] = {swapchain.views[i], depth_image.view};
                                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
                                                    sizeof(new_framebuffer_views) / sizeof(new_framebuffer_views[0]),
                                                    new_framebuffer_views, &framebuffers[i]);
@@ -597,10 +598,9 @@ int main(int argc, char** argv) {
                 buffer_destroy(base.device, &ubufs[i]);
         }
 
-        for (int i = 0; i < swapchain.image_ct; i++) {
-                vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
-                image_destroy(base.device, &depth_images[i]);
-        }
+        image_destroy(base.device, &depth_image);
+
+        for (int i = 0; i < swapchain.image_ct; i++) vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
 
         for (int i = 0; i < mesh_ct; i++) image_destroy(base.device, &textures[i]);
 
@@ -613,7 +613,6 @@ int main(int argc, char** argv) {
 
 	free(framebuffers);
 	free(image_fences);
-	free(depth_images);
 	free(textures);
 	free(meshes);
 }
