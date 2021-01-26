@@ -83,15 +83,6 @@ void sync_set_destroy(VkDevice device, struct SyncSet* sync_set) {
 	vkDestroySemaphore(device, sync_set->render_sem, NULL);
 }
 
-void depth_create(VkPhysicalDevice phys_dev, VkDevice device,
-                  VkFormat format, uint32_t width, uint32_t height, struct Image* image)
-{
-	image_create(phys_dev, device, format, width, height,
-	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-	             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, 1, image);
-}
-
 int main(int argc, char** argv) {
         assert(argc == 2);
         const char* mesh_path = argv[1];
@@ -106,6 +97,9 @@ int main(int argc, char** argv) {
         // Base
         struct Base base;
         base_create(window, VALIDATION_ON, INSTANCE_EXT_CT, INSTANCE_EXTS, DEVICE_EXT_CT, DEVICE_EXTS, &base);
+
+        const VkSampleCountFlagBits sample_ct = base.max_samples > VK_SAMPLE_COUNT_4_BIT ?
+       		VK_SAMPLE_COUNT_4_BIT : base.max_samples;
 
         // Load model
         fastObjMesh* model = fast_obj_read(mesh_path);
@@ -254,18 +248,20 @@ int main(int argc, char** argv) {
         shaders[1].pName = "main";
 
         // Render pass
-        VkAttachmentDescription attachments[2] = {0};
+        VkAttachmentDescription attachments[3] = {0};
+        // Multisampled color
         attachments[0].format = swapchain.format;
-        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[0].samples = sample_ct;
         attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-        attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+	// Multisampled depth
         attachments[1].format = DEPTH_FORMAT;
-        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[1].samples = sample_ct;
         attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
@@ -273,19 +269,34 @@ int main(int argc, char** argv) {
         attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
-        VkAttachmentReference color_ref = {0};
-        color_ref.attachment = 0;
-        color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        // Color resolve
+        attachments[2].format = swapchain.format;
+        attachments[2].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[2].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[2].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[2].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[2].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[2].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[2].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+        VkAttachmentReference color_multisampled_ref = {0};
+        color_multisampled_ref.attachment = 0;
+        color_multisampled_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
         VkAttachmentReference depth_ref = {0};
         depth_ref.attachment = 1;
         depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
+        VkAttachmentReference color_resolve_ref = {0};
+        color_resolve_ref.attachment = 2;
+        color_resolve_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
         VkSubpassDescription subpass = {0};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
-        subpass.pColorAttachments = &color_ref;
+        subpass.pColorAttachments = &color_multisampled_ref;
         subpass.pDepthStencilAttachment = &depth_ref;
+        subpass.pResolveAttachments = &color_resolve_ref;
 
         VkSubpassDependency subpass_dep = {0};
         subpass_dep.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -345,6 +356,8 @@ int main(int argc, char** argv) {
         pipeline_settings.depth.depthWriteEnable = VK_TRUE;
         pipeline_settings.depth.depthCompareOp = VK_COMPARE_OP_LESS;
 
+        pipeline_settings.multisampling.rasterizationSamples = sample_ct;
+
 	VkPipeline pipeline;
 	pipeline_create(base.device, &pipeline_settings,
 	                sizeof(shaders) / sizeof(shaders[0]), shaders, &vertex_info,
@@ -352,12 +365,18 @@ int main(int argc, char** argv) {
 
 	// Depth buffer
 	struct Image depth_image;
-	depth_create(base.phys_dev, base.device, DEPTH_FORMAT, swapchain.width, swapchain.height, &depth_image);
+	image_create_depth(base.phys_dev, base.device, DEPTH_FORMAT,
+                           swapchain.width, swapchain.height, sample_ct, &depth_image);
+
+	// Color image (multisampled if supported)
+	struct Image color_image;
+	image_create_color(base.phys_dev, base.device, swapchain.format,
+                           swapchain.width, swapchain.height, sample_ct, &color_image);
 
         // Framebuffers
         VkFramebuffer* framebuffers = malloc(swapchain.image_ct * sizeof(framebuffers[0]));
         for (int i = 0; i < swapchain.image_ct; i++) {
-                VkImageView views[] = {swapchain.views[i], depth_image.view};
+                VkImageView views[] = {color_image.view, depth_image.view, swapchain.views[i]};
                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
                                    sizeof(views) / sizeof(views[0]), views, &framebuffers[i]);
         }
@@ -425,17 +444,26 @@ int main(int argc, char** argv) {
                                 sync_set_create(base.device, &sync_sets[i]);
                         }
 
+			// Recreate depth
                         image_destroy(base.device, &depth_image);
-                        depth_create(base.phys_dev, base.device, DEPTH_FORMAT,
-                                     swapchain.width, swapchain.height, &depth_image);
+                	image_create_depth(base.phys_dev, base.device, DEPTH_FORMAT,
+                                           swapchain.width, swapchain.height,
+                                           sample_ct, &depth_image);
+
+                	// Recreate color
+                        image_destroy(base.device, &color_image);
+                	image_create_color(base.phys_dev, base.device, swapchain.format,
+                                           swapchain.width, swapchain.height,
+                                           sample_ct, &color_image);
 
                         for (int i = 0; i < swapchain.image_ct; i++) {
                                 vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
 
-                                VkImageView new_framebuffer_views[] = {swapchain.views[i], depth_image.view};
+                                VkImageView new_fb_views[] = {color_image.view, depth_image.view,
+                                                              swapchain.views[i]};
                                 framebuffer_create(base.device, rpass, swapchain.width, swapchain.height,
-                                                   sizeof(new_framebuffer_views) / sizeof(new_framebuffer_views[0]),
-                                                   new_framebuffer_views, &framebuffers[i]);
+                                                   sizeof(new_fb_views) / sizeof(new_fb_views[0]),
+                                                   new_fb_views, &framebuffers[i]);
 
                                 image_fences[i] = VK_NULL_HANDLE;
                         }
@@ -484,8 +512,9 @@ int main(int argc, char** argv) {
                 cbuf_begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
                 vkBeginCommandBuffer(cbuf, &cbuf_begin_info);
 
-                VkClearValue clear_vals[2] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
-                                              {{{1.0F, 0.0F}}}};
+                VkClearValue clear_vals[] = {{{{0.0F, 0.0F, 0.0F, 1.0F}}},
+                                             {{{1.0F, 0.0F}}},
+                                             {{{0.0F, 0.0F, 0.0F, 1.0F}}}};
 
                 VkRenderPassBeginInfo cbuf_rpass_info = {0};
                 cbuf_rpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -599,6 +628,7 @@ int main(int argc, char** argv) {
         }
 
         image_destroy(base.device, &depth_image);
+        image_destroy(base.device, &color_image);
 
         for (int i = 0; i < swapchain.image_ct; i++) vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
 

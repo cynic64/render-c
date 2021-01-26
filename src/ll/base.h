@@ -19,6 +19,7 @@ struct Base {
 	VkDevice device;
 	VkQueue queue;
 	VkCommandPool cpool;
+	VkSampleCountFlagBits max_samples;
 };
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -217,6 +218,17 @@ void base_create(GLFWwindow* window,
         VkFormatProperties dev_format_props;
         vkGetPhysicalDeviceFormatProperties(base->phys_dev, VK_FORMAT_B8G8R8A8_SRGB, &dev_format_props);
         assert(dev_format_props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
+
+        // Get the max sample count
+        VkSampleCountFlags sample_counts = phys_dev_props.limits.framebufferColorSampleCounts
+                                         & phys_dev_props.limits.framebufferDepthSampleCounts;
+        if (sample_counts & VK_SAMPLE_COUNT_64_BIT) base->max_samples = VK_SAMPLE_COUNT_64_BIT;
+        else if (sample_counts & VK_SAMPLE_COUNT_32_BIT) base->max_samples = VK_SAMPLE_COUNT_32_BIT;
+        else if (sample_counts & VK_SAMPLE_COUNT_16_BIT) base->max_samples = VK_SAMPLE_COUNT_16_BIT;
+        else if (sample_counts & VK_SAMPLE_COUNT_8_BIT) base->max_samples = VK_SAMPLE_COUNT_8_BIT;
+        else if (sample_counts & VK_SAMPLE_COUNT_4_BIT) base->max_samples = VK_SAMPLE_COUNT_4_BIT;
+        else if (sample_counts & VK_SAMPLE_COUNT_2_BIT) base->max_samples = VK_SAMPLE_COUNT_2_BIT;
+        else base->max_samples = VK_SAMPLE_COUNT_1_BIT;
 }
 
 void base_destroy(struct Base* base) {

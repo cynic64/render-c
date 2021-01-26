@@ -37,6 +37,10 @@ void swapchain_create(VkSurfaceKHR surface, VkPhysicalDevice phys_dev, VkDevice 
         VkPresentModeKHR* present_modes = malloc(present_mode_ct * sizeof(present_modes[0]));
         vkGetPhysicalDeviceSurfacePresentModesKHR(phys_dev, surface, &present_mode_ct, present_modes);
 
+        for (int i = 0; i < present_mode_ct; i++) {
+                printf("Supported present mode: %u\n", present_modes[i]);
+        }
+
         VkSurfaceFormatKHR surface_format = formats[0];
         for (int i = 0; i < format_ct; ++i) {
                 if (formats[i].format == format_pref) surface_format = formats[i];

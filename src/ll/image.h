@@ -6,6 +6,7 @@
 #include "cbuf.h"
 
 #include <assert.h>
+#include <stdio.h>
 
 struct Image {
         VkImage handle;
@@ -40,8 +41,8 @@ void image_view_create(VkDevice device, VkImage image, VkFormat format,
 	assert(res == VK_SUCCESS);
 }
 
-int format_supported(VkPhysicalDevice phys_dev, VkFormat format,
-                     VkImageTiling tiling, VkFormatFeatureFlags features)
+int image_check_format_supported(VkPhysicalDevice phys_dev, VkFormat format,
+                                 VkImageTiling tiling, VkFormatFeatureFlags features)
 {
 	VkFormatProperties props;
 	vkGetPhysicalDeviceFormatProperties(phys_dev, format, &props);
@@ -55,11 +56,17 @@ int format_supported(VkPhysicalDevice phys_dev, VkFormat format,
 void image_create(VkPhysicalDevice phys_dev, VkDevice device, VkFormat format, uint32_t width, uint32_t height,
                   VkImageTiling tiling, VkImageAspectFlags aspect,
                   VkMemoryPropertyFlags props, VkImageUsageFlags usage,
-                  VkFormatFeatureFlags features, uint32_t mip_levels, struct Image* image)
+                  VkFormatFeatureFlags features, uint32_t mip_levels, VkSampleCountFlagBits samples,
+                  struct Image* image)
 {
-        // Handle
-        assert(format_supported(phys_dev, format, tiling, features));
+        #ifndef NDEBUG
+        if (!image_check_format_supported(phys_dev, format, tiling, features)) {
+                fprintf(stderr, "Unsupported format with tiling %u: %u\n", tiling, format);
+                exit(1);
+        }
+        #endif
 
+        // Handle
 	VkImageCreateInfo info = {0};
 	info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
 	info.imageType = VK_IMAGE_TYPE_2D;
@@ -73,7 +80,7 @@ void image_create(VkPhysicalDevice phys_dev, VkDevice device, VkFormat format, u
 	info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 	info.usage = usage;
 	info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	info.samples = VK_SAMPLE_COUNT_1_BIT;
+	info.samples = samples;
 
 	VkResult res = vkCreateImage(device, &info, NULL, &image->handle);
 	assert(res == VK_SUCCESS);
@@ -157,6 +164,26 @@ void framebuffer_create(VkDevice device, VkRenderPass rpass, uint32_t width, uin
 
         VkResult res = vkCreateFramebuffer(device, &info, NULL, framebuffer);
         assert(res == VK_SUCCESS);
+}
+
+void image_create_depth(VkPhysicalDevice phys_dev, VkDevice device,
+                        VkFormat format, uint32_t width, uint32_t height, VkSampleCountFlagBits samples,
+                        struct Image* image)
+{
+	image_create(phys_dev, device, format, width, height,
+	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, 1, samples, image);
+}
+
+void image_create_color(VkPhysicalDevice phys_dev, VkDevice device,
+                        VkFormat format, uint32_t width, uint32_t height, VkSampleCountFlagBits samples,
+                        struct Image* image)
+{
+	image_create(phys_dev, device, format, width, height,
+	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+	             0, 1, samples, image);
 }
 
 #endif // LL_IMAGE_H
