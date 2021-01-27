@@ -2,8 +2,12 @@
 
 layout (push_constant) uniform PushConstants {
         mat4 model;
-        mat4 proj_view;
-} mvp;
+} push_constants;
+
+layout(set = 0, binding = 0) uniform Camera {
+        mat4 view;
+        mat4 proj;
+} camera;
 
 layout (location = 0) in vec3 in_pos;
 layout (location = 1) in vec3 in_norm;
@@ -15,5 +19,5 @@ layout (location = 1) out vec2 out_tex_c;
 void main() {
         out_norm = in_norm;
         out_tex_c = in_tex_c;
-	gl_Position = mvp.proj_view * mvp.model * vec4(in_pos, 1.0);
+	gl_Position = camera.proj * camera.view * push_constants.model * vec4(in_pos, 1.0);
 }
