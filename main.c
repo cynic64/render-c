@@ -52,10 +52,9 @@ struct Vertex {
         vec2 tex_c;
 };
 
-struct Uniform {
+struct ModelViewProj {
         mat4 model;
-        mat4 view;
-        mat4 proj;
+        mat4 proj_view;
 };
 
 struct SyncSet {
@@ -321,25 +320,22 @@ int main(int argc, char** argv) {
         res = vkCreateRenderPass(base.device, &rpass_info, NULL, &rpass);
         assert(res == VK_SUCCESS);
 
-        // Descriptor set layouts
-       	VkDescriptorSetLayoutBinding set_cam_desc = {0};
-        set_cam_desc.binding = 0;
-        set_cam_desc.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        set_cam_desc.descriptorCount = 1;
-        set_cam_desc.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-        VkDescriptorSetLayout set_cam_layout;
-        set_layout_create(base.device, 1, &set_cam_desc, &set_cam_layout);
-
         // Pipeline layout
-	VkDescriptorSetLayout pipeline_set_layouts[] = {set_cam_layout, set_tex_layout};
+        assert(sizeof(struct ModelViewProj) <= BASE_MAX_PUSH_CONSTANT_SIZE);
+	VkPushConstantRange push_constant_range = {0};
+	push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	push_constant_range.offset = 0;
+	push_constant_range.size = sizeof(struct ModelViewProj);
 
-        VkPipelineLayoutCreateInfo pipeline_lt_info = {0};
-        pipeline_lt_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipeline_lt_info.setLayoutCount = sizeof(pipeline_set_layouts) / sizeof(pipeline_set_layouts[0]);
-        pipeline_lt_info.pSetLayouts = pipeline_set_layouts;
+        VkPipelineLayoutCreateInfo pipeline_layout_info = {0};
+        pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        pipeline_layout_info.setLayoutCount = 1;
+        pipeline_layout_info.pSetLayouts = &set_tex_layout;
+        pipeline_layout_info.pushConstantRangeCount = 1;
+        pipeline_layout_info.pPushConstantRanges = &push_constant_range;
 
-        VkPipelineLayout pipeline_lt;
-        res = vkCreatePipelineLayout(base.device, &pipeline_lt_info, NULL, &pipeline_lt);
+        VkPipelineLayout pipeline_layout;
+        res = vkCreatePipelineLayout(base.device, &pipeline_layout_info, NULL, &pipeline_layout);
         assert(res == VK_SUCCESS);
 
         // Pipeline
@@ -360,7 +356,7 @@ int main(int argc, char** argv) {
 	VkPipeline pipeline;
 	pipeline_create(base.device, &pipeline_settings,
 	                sizeof(shaders) / sizeof(shaders[0]), shaders, &vertex_info,
-	                pipeline_lt, rpass, 0, &pipeline);
+	                pipeline_layout, rpass, 0, &pipeline);
 
 	// Depth buffer
 	struct Image depth_image;
@@ -388,30 +384,7 @@ int main(int argc, char** argv) {
         struct SyncSet sync_sets [CONCURRENT_FRAMES];
         for (int i = 0; i < CONCURRENT_FRAMES; i++) sync_set_create(base.device, &sync_sets[i]);
 
-        // Uniform buffers (one for every render process)
-        struct Buffer ubufs[CONCURRENT_FRAMES];
-        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
-                buffer_create(base.phys_dev, base.device, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-                              VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT,
-                              sizeof(struct Uniform), &ubufs[i]);
-        };
-
-        // Sets
-        VkDescriptorSet sets_cam[CONCURRENT_FRAMES];
-        for (int i = 0; i < CONCURRENT_FRAMES; i++) {
-                struct Descriptor desc_cam = {0};
-                desc_cam.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-                desc_cam.binding = 0;
-                desc_cam.shader_stage_flags = VK_SHADER_STAGE_VERTEX_BIT;
-                desc_cam.buffer.buffer = ubufs[i].handle;
-                desc_cam.buffer.range = ubufs[i].size;
-                set_create(base.device, dpool, set_cam_layout,
-                           1, &desc_cam, &sets_cam[i]);
-        }
-
-	for (int i = 0; i < sizeof(pipeline_set_layouts) / sizeof(pipeline_set_layouts[0]); i++) {
-                vkDestroyDescriptorSetLayout(base.device, pipeline_set_layouts[i], NULL);
-	}
+        vkDestroyDescriptorSetLayout(base.device, set_tex_layout, NULL);
 
         // Image fences
         VkFence* image_fences = malloc(swapchain.image_ct * sizeof(image_fences[0]));
@@ -482,12 +455,12 @@ int main(int argc, char** argv) {
                 vec3 eye = {2.0F * sin(elapsed * 0.2), 1.5F, 2.0F * cos(elapsed * 0.2)};
                 vec3 looking_at = {0.0F, 1.0F, 0.0F};
 
-                struct Uniform uni_data;
-                glm_mat4_identity(uni_data.model);
-                glm_lookat(eye, looking_at, (vec3){0.0F, -1.0F, 0.0F}, uni_data.view);
-                glm_perspective(1.5F, (float) swapchain.width / (float) swapchain.height, 0.1F, 10000.0F, uni_data.proj);
-                struct Buffer* ubuf = &ubufs[frame_idx];
-                mem_write(base.device, ubuf->mem, sizeof(uni_data), &uni_data);
+                struct ModelViewProj mvp_data;
+                glm_mat4_identity(mvp_data.model);
+                mat4 mvp_view, mvp_proj;
+                glm_lookat(eye, looking_at, (vec3){0.0F, -1.0F, 0.0F}, mvp_view);
+                glm_perspective(1.5F, (float) swapchain.width / (float) swapchain.height, 0.1F, 10000.0F, mvp_proj);
+                glm_mat4_mul(mvp_proj, mvp_view, mvp_data.proj_view);
 
                 // Wait for the render process using these sync objects to finish rendering
                 res = vkWaitForFences(base.device, 1, &sync_set->render_fence, VK_TRUE, UINT64_MAX);
@@ -543,11 +516,12 @@ int main(int argc, char** argv) {
                 scissor.extent.height = swapchain.height;
                 vkCmdSetScissor(cbuf, 0, 1, &scissor);
 
-                vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
-                                        0, 1, &sets_cam[frame_idx], 0, NULL);
+		vkCmdPushConstants(cbuf, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT,
+                                   0, sizeof(struct ModelViewProj), &mvp_data);
+
                 for (int i = 0; i < mesh_ct; i++) {
-                        vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_lt,
-                                                1, 1, &meshes[i].set, 0, NULL);
+                        vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
+                                                0, 1, &meshes[i].set, 0, NULL);
                         vkCmdDrawIndexed(cbuf, meshes[i].index_ct, 1, meshes[i].index_offset, 0, 0);
                 }
                 vkCmdEndRenderPass(cbuf);
@@ -607,7 +581,7 @@ int main(int argc, char** argv) {
 
         vkDestroyPipeline(base.device, pipeline, NULL);
 
-        vkDestroyPipelineLayout(base.device, pipeline_lt, NULL);
+        vkDestroyPipelineLayout(base.device, pipeline_layout, NULL);
 
         vkDestroyRenderPass(base.device, rpass, NULL);
 
@@ -623,15 +597,18 @@ int main(int argc, char** argv) {
 
         for (int i = 0; i < CONCURRENT_FRAMES; i++) {
                 sync_set_destroy(base.device, &sync_sets[i]);
-                buffer_destroy(base.device, &ubufs[i]);
         }
 
         image_destroy(base.device, &depth_image);
         image_destroy(base.device, &color_image);
 
-        for (int i = 0; i < swapchain.image_ct; i++) vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
+        for (int i = 0; i < swapchain.image_ct; i++) {
+                vkDestroyFramebuffer(base.device, framebuffers[i], NULL);
+        }
 
-        for (int i = 0; i < mesh_ct; i++) image_destroy(base.device, &textures[i]);
+        for (int i = 0; i < mesh_ct; i++) {
+                image_destroy(base.device, &textures[i]);
+        }
 
         vkDestroyDescriptorPool(base.device, dpool, NULL);
 

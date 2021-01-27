@@ -4,10 +4,13 @@
 #include <vulkan/vulkan.h>
 
 #include <assert.h>
+#include <stdint.h>
 #include <string.h>
 
-const int VALIDATION_LAYER_CT = 1;
-const char* VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
+const int BASE_VALIDATION_LAYER_CT = 1;
+const char* BASE_VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
+
+const size_t BASE_MAX_PUSH_CONSTANT_SIZE = 128;
 
 struct Base {
 	VkInstance instance;
@@ -76,8 +79,8 @@ void base_create(GLFWwindow* window,
                 VkLayerProperties* layers = malloc(layer_ct * sizeof(layers[0]));
                 vkEnumerateInstanceLayerProperties(&layer_ct, layers);
 
-                for (int i = 0; i < VALIDATION_LAYER_CT; ++i) {
-                        const char* want_layer = VALIDATION_LAYERS[i];
+                for (int i = 0; i < BASE_VALIDATION_LAYER_CT; ++i) {
+                        const char* want_layer = BASE_VALIDATION_LAYERS[i];
                         int found = 0;
                         for (int j = 0; j < layer_ct && !found; ++j) {
                                 if (strcmp(layers[j].layerName, want_layer) == 0) found = 1;
@@ -109,8 +112,8 @@ void base_create(GLFWwindow* window,
 
 	if (want_debug) {
                 instance_info.pNext = (VkDebugUtilsMessengerCreateInfoEXT*) &debug_info;
-                instance_info.enabledLayerCount = VALIDATION_LAYER_CT;
-                instance_info.ppEnabledLayerNames = VALIDATION_LAYERS;
+                instance_info.enabledLayerCount = BASE_VALIDATION_LAYER_CT;
+                instance_info.ppEnabledLayerNames = BASE_VALIDATION_LAYERS;
 	} else instance_info.enabledLayerCount = 0;
 
         instance_info.enabledExtensionCount = real_instance_ext_ct;
