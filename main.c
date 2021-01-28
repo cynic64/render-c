@@ -11,6 +11,7 @@
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.h>
 
+#include "src/camera.h"
 #include "src/obj.h"
 #include "src/texture.h"
 #include "src/timer.h"
@@ -37,6 +38,9 @@ const int DEVICE_EXT_CT = 1;
 const VkFormat SC_FORMAT_PREF = VK_FORMAT_B8G8R8A8_SRGB;
 const VkPresentModeKHR SC_PRESENT_MODE_PREF = VK_PRESENT_MODE_IMMEDIATE_KHR;
 const VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
+
+const double MOUSE_SENSITIVITY_FACTOR = 0.001;
+const float MOVEMENT_SPEED = 50.0F;
 
 #define CONCURRENT_FRAMES 4
 
@@ -100,6 +104,7 @@ int main(int argc, char** argv) {
         glfwInit();
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan", NULL, NULL);
+        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
         // Base
         struct Base base;
@@ -258,6 +263,14 @@ int main(int argc, char** argv) {
                 set_create(base.device, dpool, set_cam_layout,
                            1, &desc_cam, &sets_cam[i]);
         }
+
+	// Camera
+	struct CameraFly camera;
+	camera.pitch = 0.0F;
+	camera.yaw = 0.0F;
+	camera.eye[0] = 0.0F; camera.eye[1] = 2.0F; camera.eye[2] = 0.0F; 
+	double last_mouse_x, last_mouse_y;
+	glfwGetCursorPos(window, &last_mouse_x, &last_mouse_y);
 
         // Swapchain
         struct Swapchain swapchain;
@@ -454,6 +467,7 @@ int main(int argc, char** argv) {
         // Main loop
         int frame_ct = 0;
         struct timespec start_time = timer_start();
+        struct timespec last_frame_time = timer_start();
         int must_recreate = 0;
 
         while (!glfwWindowShouldClose(window)) {
@@ -504,6 +518,28 @@ int main(int argc, char** argv) {
                         if (real_width != swapchain.width || real_height != swapchain.height) must_recreate = 1;
                 }
 
+                // Handle input
+                // Mouse movement
+                double new_mouse_x, new_mouse_y;
+                glfwGetCursorPos(window, &new_mouse_x, &new_mouse_y);
+                double d_mouse_x = new_mouse_x - last_mouse_x, d_mouse_y = new_mouse_y - last_mouse_y;
+                double delta = timer_get_elapsed(&last_frame_time);
+                last_frame_time = timer_start(last_frame_time);
+        	last_mouse_x = new_mouse_x; last_mouse_y = new_mouse_y;
+
+        	// Keys
+        	vec3 cam_movement = {0.0F, 0.0F, 0.0F};
+        	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) cam_movement[2] += MOVEMENT_SPEED;
+        	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) cam_movement[2] -= MOVEMENT_SPEED;
+        	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) cam_movement[0] -= MOVEMENT_SPEED;
+        	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) cam_movement[0] += MOVEMENT_SPEED;
+
+        	// Update camera
+        	camera_fly_update(&camera,
+                                  d_mouse_x * MOUSE_SENSITIVITY_FACTOR, d_mouse_y * MOUSE_SENSITIVITY_FACTOR,
+        	                  cam_movement, delta);
+
+		// Set up frame
                 int frame_idx = frame_ct % CONCURRENT_FRAMES;
                 struct SyncSet* sync_set = &sync_sets[frame_idx];
 
@@ -516,13 +552,9 @@ int main(int argc, char** argv) {
                 // Reset command buffer
                 vkResetCommandBuffer(cbuf, 0);
 
-                // Write to ubuf
-                double elapsed = timer_get_elapsed(&start_time);
-                vec3 eye = {2.0F * sin(elapsed * 0.2), 1.5F, 2.0F * cos(elapsed * 0.2)};
-                vec3 looking_at = {0.0F, 1.0F, 0.0F};
-
+                // Update camera uniform buffer
                 struct CameraUniform uni_data;
-                glm_lookat(eye, looking_at, (vec3){0.0F, -1.0F, 0.0F}, uni_data.view);
+                memcpy(uni_data.view, camera.view, sizeof(camera.view));
                 glm_perspective(1.5F, (float) swapchain.width / (float) swapchain.height, 0.1F, 10000.0F, uni_data.proj);
                 struct Buffer* ubuf = &ubufs[frame_idx];
                 mem_write(base.device, ubuf->mem, sizeof(uni_data), &uni_data);

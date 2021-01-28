@@ -2,9 +2,9 @@
 
 layout (push_constant, std140) uniform PushConstants {
         mat4 model;
-        vec4 ambient;
-        vec4 diffuse;
-        vec4 specular;
+        vec3 ambient;
+        vec3 diffuse;
+        vec3 specular;
         bool use_textures;
 } constants;
 
