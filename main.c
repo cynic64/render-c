@@ -59,6 +59,10 @@ struct CameraUniform {
 
 struct PushConstants {
         mat4 model;
+        vec4 ambient;
+        vec4 diffuse;
+        vec4 specular;
+        float use_textures;
 };
 
 struct SyncSet {
@@ -71,6 +75,7 @@ struct Mesh {
         uint32_t index_offset;
         uint32_t index_ct;
         VkDescriptorSet set;
+        struct PushConstants push_constants;
 };
 
 void sync_set_create(VkDevice device, struct SyncSet* sync_set) {
@@ -129,6 +134,17 @@ int main(int argc, char** argv) {
         for (int i = 0; i < mesh_ct; i++) {
                 meshes[i].index_offset = meshes_raw[i].index_offset;
                 meshes[i].index_ct = meshes_raw[i].index_ct;
+
+                glm_mat4_identity(meshes[i].push_constants.model);
+                meshes[i].push_constants.ambient[0] = model->materials[i].Ka[0];
+                meshes[i].push_constants.ambient[1] = model->materials[i].Ka[1];
+                meshes[i].push_constants.ambient[2] = model->materials[i].Ka[2];
+                meshes[i].push_constants.diffuse[0] = model->materials[i].Kd[0];
+                meshes[i].push_constants.diffuse[1] = model->materials[i].Kd[1];
+                meshes[i].push_constants.diffuse[2] = model->materials[i].Kd[2];
+                meshes[i].push_constants.specular[0] = model->materials[i].Ks[0];
+                meshes[i].push_constants.specular[1] = model->materials[i].Ks[1];
+                meshes[i].push_constants.specular[2] = model->materials[i].Ks[2];
         }
         free(vertices_raw);
         free(meshes_raw);
@@ -197,7 +213,11 @@ int main(int argc, char** argv) {
 	struct Image* textures = malloc(mesh_ct * sizeof(textures[0]));
 	for (int i = 0; i < mesh_ct; i++) {
         	const char* path = model->materials[i].map_Kd.path;
-        	if (path == NULL) path = TEXTURE_FALLBACK_PATH;
+        	if (path == NULL) {
+                	path = TEXTURE_FALLBACK_PATH;
+                	meshes[i].push_constants.use_textures = 0.0F;
+        	} else meshes[i].push_constants.use_textures = 1.0F;
+
         	texture_set_from_path(base.phys_dev, base.device, base.queue, base.cpool, dpool, tex_sampler,
                                       set_tex_layout, path, &textures[i], &meshes[i].set);
 	};
@@ -357,7 +377,7 @@ int main(int argc, char** argv) {
         // Push constants
         assert(sizeof(struct PushConstants) <= BASE_MAX_PUSH_CONSTANT_SIZE);
 	VkPushConstantRange push_constant_range = {0};
-	push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+	push_constant_range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 	push_constant_range.offset = 0;
 	push_constant_range.size = sizeof(struct PushConstants);
 
@@ -507,10 +527,6 @@ int main(int argc, char** argv) {
                 struct Buffer* ubuf = &ubufs[frame_idx];
                 mem_write(base.device, ubuf->mem, sizeof(uni_data), &uni_data);
 
-                // Calculate push constants ('calculate' is a grand word right now, it'll be more interesting later)
-                struct PushConstants push_constant_data;
-                glm_mat4_identity(push_constant_data.model);
-
                 // Acquire an image
                 uint32_t image_idx;
                 res = vkAcquireNextImageKHR(base.device, swapchain.handle, UINT64_MAX,
@@ -561,10 +577,11 @@ int main(int argc, char** argv) {
 		// Actually draw
                 vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
                                         0, 1, &sets_cam[frame_idx], 0, NULL);
-		vkCmdPushConstants(cbuf, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT,
-                                   0, sizeof(struct PushConstants), &push_constant_data);
-
                 for (int i = 0; i < mesh_ct; i++) {
+        		vkCmdPushConstants(cbuf, pipeline_layout,
+                                           VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                                           0, sizeof(struct PushConstants), &meshes[i].push_constants);
+
                         vkCmdBindDescriptorSets(cbuf, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
                                                 1, 1, &meshes[i].set, 0, NULL);
                         vkCmdDrawIndexed(cbuf, meshes[i].index_ct, 1, meshes[i].index_offset, 0, 0);

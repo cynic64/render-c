@@ -1,8 +1,12 @@
 #version 450
 
-layout (push_constant) uniform PushConstants {
+layout (push_constant, std140) uniform PushConstants {
         mat4 model;
-} push_constants;
+        vec4 ambient;
+        vec4 diffuse;
+        vec4 specular;
+        bool use_textures;
+} constants;
 
 layout(set = 0, binding = 0) uniform Camera {
         mat4 view;
@@ -19,5 +23,5 @@ layout (location = 1) out vec2 out_tex_c;
 void main() {
         out_norm = in_norm;
         out_tex_c = in_tex_c;
-	gl_Position = camera.proj * camera.view * push_constants.model * vec4(in_pos, 1.0);
+	gl_Position = camera.proj * camera.view * constants.model * vec4(in_pos, 1.0);
 }
