@@ -18,6 +18,7 @@
 
 #include "src/ll/base.h"
 #include "src/ll/buffer.h"
+#include "src/ll/glfw_error.h"
 #include "src/ll/image.h"
 #include "src/ll/pipeline.h"
 #include "src/ll/set.h"
@@ -102,6 +103,7 @@ int main(int argc, char** argv) {
 
         // GLFW
         glfwInit();
+        glfwSetErrorCallback(glfw_error_callback);
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         GLFWwindow* window = glfwCreateWindow(800, 600, "Vulkan", NULL, NULL);
         glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
