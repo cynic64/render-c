@@ -34,7 +34,10 @@ vec3 Uncharted2Tonemap(vec3 x) {
 void main() {
         vec3 light_dir = normalize(vec3(1.0, 1.0, 1.0));
 
-        vec3 diffuse_color = texture(tex_sampler, vec2(in_tex_c.x, in_tex_c.y * -1.0)).rgb * constants.use_textures
+        vec4 texture_sample = texture(tex_sampler, vec2(in_tex_c.x, in_tex_c.y * -1.0));
+        if (texture_sample.a == 0.0) discard;
+
+        vec3 diffuse_color = texture_sample.rgb * constants.use_textures
                 + constants.diffuse * (1.0 - constants.use_textures);
         float diffuse_factor = max(dot(in_norm, light_dir), 0.0);
 
