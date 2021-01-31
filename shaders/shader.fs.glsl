@@ -18,35 +18,10 @@ layout (location = 1) in vec2 in_tex_c;
 
 layout (location = 0) out vec4 out_color;
 
-float A = 0.15;
-float B = 0.50;
-float C = 0.10;
-float D = 0.20;
-float E = 0.02;
-float F = 0.30;
-float W = 11.2;
-
-// taken from: http://filmicworlds.com/blog/filmic-tonemapping-operators/
-vec3 Uncharted2Tonemap(vec3 x) {
-        return ((x*(A*x+C*B)+D*E)/(x*(A*x+B)+D*F))-E/F;
-}
-
 void main() {
-        vec3 light_dir = normalize(vec3(1.0, 1.0, 1.0));
-
-        vec4 texture_sample = texture(tex_sampler, vec2(in_tex_c.x, in_tex_c.y * -1.0));
-        if (texture_sample.a == 0.0) discard;
-
-        vec3 diffuse_color = texture_sample.rgb * constants.use_textures
-                + constants.diffuse * (1.0 - constants.use_textures);
-        float diffuse_factor = max(dot(in_norm, light_dir), 0.0);
-
-        vec3 ambient_color = diffuse_color;
-        float ambient_factor = 0.1;
-
-        vec3 result = diffuse_color * diffuse_factor + ambient_color * ambient_factor;
-        result *= 2.0;
-        float exposure_bias = 1.0;
-        vec3 corrected = pow(Uncharted2Tonemap(exposure_bias * result), vec3(1.0/2.2));
-        out_color = vec4(corrected, 1.0);
+        if (constants.use_textures != 0.0) {
+                out_color = texture(tex_sampler, vec2(in_tex_c.x, in_tex_c.y * -1.0));
+        } else {
+                out_color = vec4(1.0, 0.0, 1.0, 1.0);
+        }
 }
