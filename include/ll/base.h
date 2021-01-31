@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 const int BASE_VALIDATION_LAYER_CT = 1;

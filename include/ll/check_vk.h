@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #ifndef NDEBUG
 void check_vk(const char* message, VkResult result) {
