@@ -10,6 +10,9 @@
 const int BASE_VALIDATION_LAYER_CT = 1;
 const char* BASE_VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
 
+const int BASE_VALIDATION_INSTANCE_EXT_CT = 1;
+const char* BASE_VALIDATION_INSTANCE_EXTS[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
+
 const size_t BASE_MAX_PUSH_CONSTANT_SIZE = 128;
 
 struct Base {
@@ -43,15 +46,22 @@ void base_create(GLFWwindow* window,
                  uint32_t device_ext_ct, const char** device_exts,
                  struct Base* base)
 {
-        // Combine GLFW extensions with whatever user wants
+        // Combine GLFW extensions with whatever user wants and maybe the debug extension
         uint32_t glfw_ext_ct = 0;
         const char** glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_ext_ct);
 
 	uint32_t real_instance_ext_ct = instance_ext_ct + glfw_ext_ct;
+	if (want_debug) real_instance_ext_ct += BASE_VALIDATION_INSTANCE_EXT_CT;
+
         const char** real_instance_exts = malloc(real_instance_ext_ct * sizeof(real_instance_exts[0]));
         for (int i = 0; i < real_instance_ext_ct; ++i) {
-                if (i < glfw_ext_ct) real_instance_exts[i] = glfw_exts[i];
-                else real_instance_exts[i] = instance_exts[i-glfw_ext_ct];
+                if (i < glfw_ext_ct) {
+                        real_instance_exts[i] = glfw_exts[i];
+                } else if (i < instance_ext_ct + glfw_ext_ct) {
+                        real_instance_exts[i] = instance_exts[i-glfw_ext_ct];
+                } else {
+                        real_instance_exts[i] = BASE_VALIDATION_INSTANCE_EXTS[i-glfw_ext_ct-instance_ext_ct];
+                }
         }
 
         // Query extensions
