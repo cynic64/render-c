@@ -15,7 +15,6 @@
 #include <stdint.h>
 
 const VkFormat TEXTURE_FORMAT = VK_FORMAT_B8G8R8A8_SRGB;
-const char* const TEXTURE_FALLBACK_PATH = "assets/error.png";
 
 // Expects all mip levels to be TRANSFER_DST_OPTIMAL, and transfers all mip levels to
 // SHADER_READ_ONLY_OPTIMAL.
@@ -85,8 +84,14 @@ void texture_set_from_path(VkPhysicalDevice phys_dev, VkDevice device, VkQueue q
 
 	if (pixels == NULL) {
         	fprintf(stderr, "Could not load %s!\n", path);
-        	pixels = stbi_load(TEXTURE_FALLBACK_PATH, &width, &height, &channels, STBI_rgb_alpha);
-        	assert(pixels != NULL);
+        	// Replace with a single pink pixel
+        	width = 1;
+        	height = 1;
+        	pixels = malloc(4);
+        	pixels[0] = 1.0F;
+        	pixels[1] = 0.0F;
+        	pixels[2] = 1.0F;
+        	pixels[3] = 1.0F;
 	}
 
 	int tex_size = 4 * width * height;
