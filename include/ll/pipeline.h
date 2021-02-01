@@ -6,6 +6,7 @@
 #include <assert.h>
 
 struct PipelineSettings {
+        VkPipelineVertexInputStateCreateInfo vertex;
         VkPipelineInputAssemblyStateCreateInfo input_assembly;
         VkPipelineRasterizationStateCreateInfo rasterizer;
         VkPipelineViewportStateCreateInfo viewport;
@@ -23,6 +24,10 @@ const VkPipelineColorBlendAttachmentState PIPELINE_COLOR_BLEND_ATTACHMENT_DEFAUL
 const VkDynamicState PIPELINE_DEFAULT_DYNAMIC_STATE[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
 
 const struct PipelineSettings PIPELINE_SETTINGS_DEFAULT = {
+        .vertex = {
+                .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+                .vertexBindingDescriptionCount = 0
+        },
         .input_assembly = {
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
                 .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
@@ -67,7 +72,6 @@ const struct PipelineSettings PIPELINE_SETTINGS_DEFAULT = {
 
 void pipeline_create(VkDevice device, const struct PipelineSettings* settings,
                      uint32_t stage_count, const VkPipelineShaderStageCreateInfo* stages,
-                     const VkPipelineVertexInputStateCreateInfo* vertex_info,
                      VkPipelineLayout layout, VkRenderPass render_pass, uint32_t subpass,
                      VkPipeline* pipeline)
 {
@@ -75,7 +79,7 @@ void pipeline_create(VkDevice device, const struct PipelineSettings* settings,
         info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
         info.stageCount = stage_count;
         info.pStages = stages;
-        info.pVertexInputState = vertex_info;
+        info.pVertexInputState = &settings->vertex;
         info.pInputAssemblyState = &settings->input_assembly;
         info.pRasterizationState = &settings->rasterizer;
         info.pViewportState = &settings->viewport;

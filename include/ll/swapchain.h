@@ -4,7 +4,10 @@
 #include <vulkan/vulkan.h>
 
 #include <assert.h>
+#include <stdint.h>
 #include <stdlib.h>
+
+const uint32_t SWAPCHAIN_DONT_CARE = UINT32_MAX;
 
 struct Swapchain {
         VkSwapchainKHR handle;
