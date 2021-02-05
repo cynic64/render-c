@@ -201,9 +201,11 @@ void base_create(GLFWwindow* window,
         VkPhysicalDeviceFeatures real_features;
         vkGetPhysicalDeviceFeatures(base->phys_dev, &real_features);
         assert(real_features.samplerAnisotropy == VK_TRUE);
+        assert(real_features.sampleRateShading == VK_TRUE);
 
         VkPhysicalDeviceFeatures dev_features = {0};
         dev_features.samplerAnisotropy = VK_TRUE;
+        dev_features.sampleRateShading = VK_TRUE;
 
         VkDeviceCreateInfo device_info = {0};
         device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
