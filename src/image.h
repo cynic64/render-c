@@ -4,9 +4,11 @@
 #include <vulkan/vulkan.h>
 
 #include "cbuf.h"
+#include "mem.h"
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 struct Image {
         VkImage handle;
@@ -23,13 +25,25 @@ struct ImageExtraInfo {
         VkFormatFeatureFlags features;
 };
 
-void image_view_create(VkDevice device, VkImage image, VkFormat format,
+void image_view_create(VkDevice device, VkImage image, VkFormat format, VkImageType type,
                        VkImageAspectFlags aspect, uint32_t mip_levels, VkImageView* view)
 {
+	VkImageViewType view_type;
+	if (type == VK_IMAGE_TYPE_1D) {
+		view_type = VK_IMAGE_VIEW_TYPE_1D;
+	} else if (type == VK_IMAGE_TYPE_2D) {
+		view_type = VK_IMAGE_VIEW_TYPE_2D;
+	} else if (type == VK_IMAGE_TYPE_3D) {
+		view_type = VK_IMAGE_VIEW_TYPE_3D;
+	} else {
+		fprintf(stderr, "Weird image type %d\n", type);
+		exit(1);
+	}
+
 	VkImageViewCreateInfo info = {0};
 	info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
 	info.image = image;
-	info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	info.viewType = view_type;
 	info.format = format;
 	info.subresourceRange.aspectMask = aspect;
 	info.subresourceRange.baseMipLevel = 0;
@@ -53,7 +67,9 @@ int image_check_format_supported(VkPhysicalDevice phys_dev, VkFormat format,
 	else return 0;
 }
 
-void image_create(VkPhysicalDevice phys_dev, VkDevice device, VkFormat format, uint32_t width, uint32_t height,
+void image_create(VkPhysicalDevice phys_dev, VkDevice device, VkFormat format,
+		  VkImageType type,
+		  uint32_t width, uint32_t height, uint32_t depth,
                   VkImageTiling tiling, VkImageAspectFlags aspect,
                   VkMemoryPropertyFlags props, VkImageUsageFlags usage,
                   VkFormatFeatureFlags features, uint32_t mip_levels, VkSampleCountFlagBits samples,
@@ -69,10 +85,10 @@ void image_create(VkPhysicalDevice phys_dev, VkDevice device, VkFormat format, u
         // Handle
 	VkImageCreateInfo info = {0};
 	info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-	info.imageType = VK_IMAGE_TYPE_2D;
+	info.imageType = type;
 	info.extent.width = width;
 	info.extent.height = height;
-	info.extent.depth = 1;
+	info.extent.depth = depth;
 	info.mipLevels = mip_levels;
 	info.arrayLayers = 1;
 	info.format = format;
@@ -94,7 +110,7 @@ void image_create(VkPhysicalDevice phys_dev, VkDevice device, VkFormat format, u
 	vkBindImageMemory(device, image->handle, image->mem, 0);
 
 	// View
-	image_view_create(device, image->handle, format, aspect, mip_levels, &image->view);
+	image_view_create(device, image->handle, format, type, aspect, mip_levels, &image->view);
 }
 
 void image_destroy(VkDevice device, struct Image* image) {
@@ -132,14 +148,14 @@ void image_trans(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImage im
 
 // Assumes image is already VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
 void image_copy_from_buffer(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImageAspectFlags aspect,
-                            VkBuffer src, VkImage dst, uint32_t width, uint32_t height)
+                            VkBuffer src, VkImage dst, uint32_t width, uint32_t height, uint32_t depth)
 {
 	VkBufferImageCopy region = {0};
 	region.imageSubresource.aspectMask = aspect;
 	region.imageSubresource.mipLevel = 0;
 	region.imageSubresource.baseArrayLayer = 0;
 	region.imageSubresource.layerCount = 1;
-	region.imageExtent = (VkExtent3D){width, height, 1};
+	region.imageExtent = (VkExtent3D){width, height, depth};
 
 	VkCommandBuffer cbuf;
 	cbuf_alloc(device, cpool, &cbuf);
@@ -170,7 +186,7 @@ void image_create_depth(VkPhysicalDevice phys_dev, VkDevice device,
                         VkFormat format, uint32_t width, uint32_t height, VkSampleCountFlagBits samples,
                         struct Image* image)
 {
-	image_create(phys_dev, device, format, width, height,
+	image_create(phys_dev, device, format, VK_IMAGE_TYPE_2D, width, height, 1,
 	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 	             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
 	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, 1, samples, image);
@@ -180,7 +196,7 @@ void image_create_color(VkPhysicalDevice phys_dev, VkDevice device,
                         VkFormat format, uint32_t width, uint32_t height, VkSampleCountFlagBits samples,
                         struct Image* image)
 {
-	image_create(phys_dev, device, format, width, height,
+	image_create(phys_dev, device, format, VK_IMAGE_TYPE_2D, width, height, 1,
 	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 	             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 	             0, 1, samples, image);
