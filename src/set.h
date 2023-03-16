@@ -22,11 +22,6 @@ struct SetInfo {
 	struct DescriptorInfo* descs;
 };
 
-struct Set {
-	VkDescriptorSet handle;
-	VkDescriptorSetLayout layout;
-};
-
 // Only supports one set of just uniform buffers for now.
 void dpool_create(VkDevice device, int desc_ct, struct DescriptorInfo* descs, VkDescriptorPool *dpool) {
 	for (int i = 0; i < desc_ct; i++) {
@@ -70,25 +65,23 @@ void set_layout_create(VkDevice device, struct SetInfo* set_info, VkDescriptorSe
 	free(bindings);
 }
 
-void set_create(VkDevice device, VkDescriptorPool dpool,
-		struct SetInfo* set_info, struct Set* set)
+void set_create(VkDevice device, VkDescriptorPool dpool, VkDescriptorSetLayout layout,
+		struct SetInfo* set_info, VkDescriptorSet *set)
 {
-	set_layout_create(device, set_info, &set->layout);
-
         VkDescriptorSetAllocateInfo info = {0};
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
         info.descriptorPool = dpool;
         info.descriptorSetCount = 1;
-        info.pSetLayouts = &set->layout;
+        info.pSetLayouts = &layout;
 
-        VkResult res = vkAllocateDescriptorSets(device, &info, &set->handle);
+        VkResult res = vkAllocateDescriptorSets(device, &info, set);
         assert(res == VK_SUCCESS);
 
         VkWriteDescriptorSet* writes = malloc(set_info->desc_ct * sizeof(writes[0]));
         memset(writes, 0, set_info->desc_ct * sizeof(writes[0]));
         for (int i = 0; i < set_info->desc_ct; ++i) {
                 writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-                writes[i].dstSet = set->handle;
+                writes[i].dstSet = *set;
                 writes[i].dstBinding = i;
                 writes[i].dstArrayElement = 0;
                 writes[i].descriptorType = set_info->descs[i].type;
@@ -104,12 +97,6 @@ void set_create(VkDevice device, VkDescriptorPool dpool,
         vkUpdateDescriptorSets(device, set_info->desc_ct, writes, 0, NULL);
 
         free(writes);
-}
-
-void set_destroy(VkDevice device, struct Set* set) {
-	vkDestroyDescriptorSetLayout(device, set->layout, NULL);
-	// The set itself is destroyed when the descriptor pool is freed, so we needn't bother with
-	// it
 }
 
 #endif // LL_SET_H

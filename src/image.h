@@ -147,7 +147,8 @@ void image_trans(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImage im
 }
 
 // Assumes image is already VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-void image_copy_from_buffer(VkDevice device, VkQueue queue, VkCommandPool cpool, VkImageAspectFlags aspect,
+void image_copy_from_buffer(VkDevice device, VkQueue queue, VkCommandPool cpool,
+			    VkImageAspectFlags aspect,
                             VkBuffer src, VkImage dst, uint32_t width, uint32_t height, uint32_t depth)
 {
 	VkBufferImageCopy region = {0};
@@ -187,7 +188,8 @@ void image_create_depth(VkPhysicalDevice phys_dev, VkDevice device,
                         struct Image* image)
 {
 	image_create(phys_dev, device, format, VK_IMAGE_TYPE_2D, width, height, 1,
-	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_DEPTH_BIT,
+		     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 	             VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
 	             VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT, 1, samples, image);
 }
@@ -197,7 +199,8 @@ void image_create_color(VkPhysicalDevice phys_dev, VkDevice device,
                         struct Image* image)
 {
 	image_create(phys_dev, device, format, VK_IMAGE_TYPE_2D, width, height, 1,
-	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+	             VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_ASPECT_COLOR_BIT,
+		     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 	             VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
 	             0, 1, samples, image);
 }
