@@ -5,8 +5,12 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <vulkan/vulkan_core.h>
+#include <stdlib.h>
 
-VkShaderModule load_shader(VkDevice device, const char* path) {
+// If info is NULL, stage won't be used.
+void load_shader(VkDevice device, const char* path, VkShaderModule* module,
+		 VkShaderStageFlagBits stage, VkPipelineShaderStageCreateInfo* pipeline_info) {
         FILE *fp = fopen(path, "r");
         assert(fp != NULL);
 
@@ -24,13 +28,17 @@ VkShaderModule load_shader(VkDevice device, const char* path) {
         info.codeSize = byte_ct;
         info.pCode = (const uint32_t*) buf;
 
-        VkShaderModule shader;
-        VkResult res = vkCreateShaderModule(device, &info, NULL, &shader);
+        VkResult res = vkCreateShaderModule(device, &info, NULL, module);
         assert(res == VK_SUCCESS);
 
         free(buf);
 
-        return shader;
+	if (pipeline_info != NULL) {
+		pipeline_info->sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		pipeline_info->stage = stage;
+		pipeline_info->module = *module;
+		pipeline_info->pName = "main";
+	}
 }
 
 #endif // LL_SHADER_H

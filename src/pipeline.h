@@ -17,11 +17,13 @@ struct PipelineSettings {
 };
 
 const VkPipelineColorBlendAttachmentState PIPELINE_COLOR_BLEND_ATTACHMENT_DEFAULT = {
-        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
-        .blendEnable = VK_FALSE
+        .blendEnable = VK_FALSE,
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+	| VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
 };
 
-const VkDynamicState PIPELINE_DEFAULT_DYNAMIC_STATE[] = {VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+const VkDynamicState PIPELINE_DEFAULT_DYNAMIC_STATE[] = {VK_DYNAMIC_STATE_VIEWPORT,
+							 VK_DYNAMIC_STATE_SCISSOR};
 
 const struct PipelineSettings PIPELINE_SETTINGS_DEFAULT = {
         .vertex = {
@@ -38,10 +40,10 @@ const struct PipelineSettings PIPELINE_SETTINGS_DEFAULT = {
                 .depthClampEnable = VK_FALSE,
                 .rasterizerDiscardEnable = VK_FALSE,
                 .polygonMode = VK_POLYGON_MODE_FILL,
-                .lineWidth = 1.0F,
                 .cullMode = VK_CULL_MODE_BACK_BIT,
                 .frontFace = VK_FRONT_FACE_CLOCKWISE,
-                .depthBiasEnable = VK_FALSE
+                .depthBiasEnable = VK_FALSE,
+                .lineWidth = 1.0F,
         },
         .viewport = {
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
@@ -54,8 +56,8 @@ const struct PipelineSettings PIPELINE_SETTINGS_DEFAULT = {
         },
         .multisampling = {
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+                .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
                 .sampleShadingEnable = VK_FALSE,
-                .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT
         },
         .color_blend = {
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
@@ -65,7 +67,8 @@ const struct PipelineSettings PIPELINE_SETTINGS_DEFAULT = {
         },
         .dynamic_state = {
                 .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-                .dynamicStateCount = sizeof(PIPELINE_DEFAULT_DYNAMIC_STATE) / sizeof(PIPELINE_DEFAULT_DYNAMIC_STATE[0]),
+                .dynamicStateCount = sizeof(PIPELINE_DEFAULT_DYNAMIC_STATE)
+		/ sizeof(PIPELINE_DEFAULT_DYNAMIC_STATE[0]),
                 .pDynamicStates = PIPELINE_DEFAULT_DYNAMIC_STATE
         }
 };
