@@ -42,6 +42,8 @@ void dpool_create(VkDevice device, int desc_ct, struct DescriptorInfo* descs, Vk
 	assert(res == VK_SUCCESS);
 }
 
+// Only needs `type` and `shader_stage_flags` from each DescriptorInfo. Useful because one set works
+// for many buffers.
 void set_layout_create(VkDevice device, struct SetInfo* set_info, VkDescriptorSetLayout* layout)
 {
 	VkDescriptorSetLayoutBinding* bindings = malloc(sizeof(bindings[0]) * set_info->desc_ct);
