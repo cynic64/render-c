@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 #include <assert.h>
+#include <string.h>
 
 void mem_alloc(VkDevice device, uint32_t mem_type_idx, VkDeviceSize size, VkDeviceMemory* mem) {
         VkMemoryAllocateInfo info = {0};

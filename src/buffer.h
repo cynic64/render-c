@@ -59,26 +59,39 @@ void buffer_copy(VkQueue queue, VkCommandBuffer cbuf, VkBuffer src, VkBuffer dst
         cbuf_submit_wait(queue, cbuf);
 }
 
+// If `staging` is NULL, the staging buffer will be destroyed instead of being returned.
+//
+// If `data` is NULL, no data will be written.
 void buffer_create_staged(VkPhysicalDevice phys_dev, VkDevice device,
 			  VkQueue queue, VkCommandPool cpool,
 			  VkBufferUsageFlags usage, VkMemoryPropertyFlags props,
-			  VkDeviceSize size, const void* data, struct Buffer* buf)
+			  VkDeviceSize size, const void* data,
+			  struct Buffer* final, struct Buffer* staging)
 {
-        struct Buffer staging;
+	assert(size > 0);
+
+        struct Buffer _staging;
         buffer_create(phys_dev, device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                      size, &staging);
-        mem_write(device, staging.mem, size, data);
+                      size, &_staging);
+	if (data != NULL) {
+		mem_write(device, _staging.mem, size, data);
+	}
 
 	VkBufferUsageFlags real_usage = usage | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        buffer_create(phys_dev, device, real_usage, props, size, buf);
+        buffer_create(phys_dev, device, real_usage, props, size, final);
 
         VkCommandBuffer cbuf;
         cbuf_alloc(device, cpool, &cbuf);
-        buffer_copy(queue, cbuf, staging.handle, buf->handle, size);
+        buffer_copy(queue, cbuf, _staging.handle, final->handle, size);
 
-        buffer_destroy(device, &staging);
-        vkFreeCommandBuffers(device, cpool, 1, &cbuf);
+	vkFreeCommandBuffers(device, cpool, 1, &cbuf);
+
+	if (staging == NULL) {
+		buffer_destroy(device, &_staging);
+	} else {
+		*staging = _staging;
+	}
 }
 
 #endif // LL_BUFFER_H
