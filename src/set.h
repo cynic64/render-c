@@ -47,6 +47,7 @@ void dpool_create(VkDevice device, int desc_ct, struct DescriptorInfo* descs, Vk
 void set_layout_create(VkDevice device, struct SetInfo* set_info, VkDescriptorSetLayout* layout)
 {
 	VkDescriptorSetLayoutBinding* bindings = malloc(sizeof(bindings[0]) * set_info->desc_ct);
+	bzero(bindings, sizeof(bindings[0]) * set_info->desc_ct);
 	for (int i = 0; i < set_info->desc_ct; i++) {
 		bindings[i].binding = i;
 		// This is only ever >1 for things accessed in the shader as arrays. I don't use
@@ -81,7 +82,6 @@ void set_create(VkDevice device, VkDescriptorPool dpool, VkDescriptorSetLayout l
 
         VkWriteDescriptorSet* writes = malloc(set_info->desc_ct * sizeof(writes[0]));
 	bzero(writes, set_info->desc_ct * sizeof(writes[0]));
-        memset(writes, 0, set_info->desc_ct * sizeof(writes[0]));
         for (int i = 0; i < set_info->desc_ct; ++i) {
                 writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writes[i].dstSet = *set;
