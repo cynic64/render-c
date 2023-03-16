@@ -59,9 +59,10 @@ void buffer_copy(VkQueue queue, VkCommandBuffer cbuf, VkBuffer src, VkBuffer dst
         cbuf_submit_wait(queue, cbuf);
 }
 
-void buffer_staged(VkPhysicalDevice phys_dev, VkDevice device, VkQueue queue, VkCommandPool cpool,
-                   VkBufferUsageFlags usage, VkMemoryPropertyFlags props,
-                   VkDeviceSize size, const void* data, struct Buffer* buf)
+void buffer_create_staged(VkPhysicalDevice phys_dev, VkDevice device,
+			  VkQueue queue, VkCommandPool cpool,
+			  VkBufferUsageFlags usage, VkMemoryPropertyFlags props,
+			  VkDeviceSize size, const void* data, struct Buffer* buf)
 {
         struct Buffer staging;
         buffer_create(phys_dev, device, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
