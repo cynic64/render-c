@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 
 #include <assert.h>
+#include <vulkan/vulkan_core.h>
 
 void rpass_color(VkDevice device, VkFormat format, VkRenderPass* rpass) {
         VkAttachmentDescription attach_color = {0};
@@ -37,6 +38,66 @@ void rpass_color(VkDevice device, VkFormat format, VkRenderPass* rpass) {
         info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
         info.attachmentCount = 1;
         info.pAttachments = &attach_color;
+        info.subpassCount = 1;
+        info.pSubpasses = &subpass;
+        info.dependencyCount = 1;
+        info.pDependencies = &subpass_dep;
+
+        VkResult res = vkCreateRenderPass(device, &info, NULL, rpass);
+        assert(res == VK_SUCCESS);
+}
+
+void rpass_color_depth(VkDevice device, VkFormat format, VkFormat depth_fmt, VkRenderPass* rpass) {
+        VkAttachmentDescription attachments[2] = {0};
+
+        attachments[0].format = format;
+        attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        attachments[0].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[0].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[0].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[0].finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+	// Multisampled depth
+        attachments[1].format = depth_fmt;
+        attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
+        attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        attachments[1].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference color_ref = {0};
+        color_ref.attachment = 0;
+        color_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+        VkAttachmentReference depth_ref = {0};
+        depth_ref.attachment = 1;
+        depth_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+        VkSubpassDescription subpass = {0};
+        subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+        subpass.colorAttachmentCount = 1;
+        subpass.pColorAttachments = &color_ref;
+        subpass.pDepthStencilAttachment = &depth_ref;
+
+        VkSubpassDependency subpass_dep = {0};
+        subpass_dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+        subpass_dep.dstSubpass = 0;
+        subpass_dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+		| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        subpass_dep.srcAccessMask = 0;
+        subpass_dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+		| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+        subpass_dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+		| VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+        VkRenderPassCreateInfo info = {0};
+        info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+        info.attachmentCount = sizeof(attachments) / sizeof(attachments[0]);
+        info.pAttachments = attachments;
         info.subpassCount = 1;
         info.pSubpasses = &subpass;
         info.dependencyCount = 1;
