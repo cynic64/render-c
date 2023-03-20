@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <vulkan/vulkan_core.h>
 #include <stdlib.h>
+#include <string.h>
 
 // If info is NULL, stage won't be used.
 void load_shader(VkDevice device, const char* path, VkShaderModule* module,
