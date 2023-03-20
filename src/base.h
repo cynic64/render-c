@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vulkan/vulkan_core.h>
 
 const int BASE_VALIDATION_LAYER_CT = 1;
 const char* BASE_VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
@@ -43,7 +44,7 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFla
 }
 
 void base_create(GLFWwindow* window,
-                 int want_debug,
+                 int want_debug, int want_compute,
                  uint32_t instance_ext_ct, const char** instance_exts, 
                  uint32_t device_ext_ct, const char** device_exts,
                  struct Base* base)
@@ -62,14 +63,16 @@ void base_create(GLFWwindow* window,
                 } else if (i < instance_ext_ct + glfw_ext_ct) {
                         real_instance_exts[i] = instance_exts[i-glfw_ext_ct];
                 } else {
-                        real_instance_exts[i] = BASE_VALIDATION_INSTANCE_EXTS[i-glfw_ext_ct-instance_ext_ct];
+                        real_instance_exts[i] =
+				BASE_VALIDATION_INSTANCE_EXTS[i-glfw_ext_ct-instance_ext_ct];
                 }
         }
 
         // Query extensions
         uint32_t avail_instance_ext_ct = 0;
         vkEnumerateInstanceExtensionProperties(NULL, &avail_instance_ext_ct, NULL);
-        VkExtensionProperties* avail_instance_exts = malloc(avail_instance_ext_ct * sizeof(avail_instance_exts[0]));
+        VkExtensionProperties* avail_instance_exts =
+		malloc(avail_instance_ext_ct * sizeof(avail_instance_exts[0]));
         vkEnumerateInstanceExtensionProperties(NULL, &avail_instance_ext_ct, avail_instance_exts);
         for (int i = 0; i < real_instance_ext_ct; ++i) {
                 const char* ext_want = real_instance_exts[i];
@@ -105,8 +108,11 @@ void base_create(GLFWwindow* window,
                 // Fill in debug messenger info
                 debug_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
                 // VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT excluded
-                debug_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-                debug_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+                debug_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
+			| VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+                debug_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
+			| VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
+			| VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
                 debug_info.pfnUserCallback = debug_cback;
         }
 
@@ -142,7 +148,9 @@ void base_create(GLFWwindow* window,
 
         // (Maybe) Create debug messenger
         if (want_debug) {
-                PFN_vkCreateDebugUtilsMessengerEXT debug_create_fun = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(base->instance, "vkCreateDebugUtilsMessengerEXT");
+                PFN_vkCreateDebugUtilsMessengerEXT debug_create_fun =
+			(PFN_vkCreateDebugUtilsMessengerEXT)
+			vkGetInstanceProcAddr(base->instance, "vkCreateDebugUtilsMessengerEXT");
                 assert(debug_create_fun != NULL);
                 debug_create_fun(base->instance, &debug_info, NULL, &base->dbg_msgr);
         } else base->dbg_msgr = VK_NULL_HANDLE;
@@ -167,9 +175,11 @@ void base_create(GLFWwindow* window,
         uint32_t queue_fam = UINT32_MAX;
         for (int i = 0; i < queue_fam_ct && queue_fam == UINT32_MAX; ++i) {
                 int graphics_ok = queue_fam_props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT;
+                int compute_ok = (!want_compute) ||
+			queue_fam_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT;
                 VkBool32 present_ok = VK_FALSE;
                 vkGetPhysicalDeviceSurfaceSupportKHR(base->phys_dev, i, base->surface, &present_ok);
-                if (graphics_ok && present_ok) queue_fam = i;
+                if (graphics_ok && present_ok && compute_ok) queue_fam = i;
         }
         assert(queue_fam != UINT32_MAX);
         base->queue_fam = queue_fam;
