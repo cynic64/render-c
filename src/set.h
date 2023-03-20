@@ -22,21 +22,37 @@ struct SetInfo {
 	struct DescriptorInfo* descs;
 };
 
-// Only supports one set of just uniform buffers for now.
-void dpool_create(VkDevice device, int desc_ct, struct DescriptorInfo* descs, VkDescriptorPool *dpool) {
-	for (int i = 0; i < desc_ct; i++) {
-		assert(descs[i].type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+void dpool_create(VkDevice device, int set_ct, int desc_ct,
+		  struct DescriptorInfo* descs, VkDescriptorPool *dpool) {
+	// Create a descriptor pool size for every possible descriptor type. Works because they are
+	// all just numbers (for example, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER = 6).
+
+	// Corresponds to VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
+	#define MAX_DESCRIPTOR_TYPE 10
+	VkDescriptorPoolSize sizes[MAX_DESCRIPTOR_TYPE + 1] = {0};
+	for (int i = 0; i <= MAX_DESCRIPTOR_TYPE; i++) {
+		sizes[i].type = i;
+		for (int j = 0; j < desc_ct; j++) {
+			if (descs[j].type == i) sizes[i].descriptorCount++;
+		}
 	}
 
-	VkDescriptorPoolSize dpool_size = {0};
-	dpool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-	dpool_size.descriptorCount = desc_ct;
+	// A lot of those pools will have descriptorCount 0, which Vulkan doesn't like. So now we
+	// take just the ones with descriptorCount > 0.
+	VkDescriptorPoolSize used_sizes[MAX_DESCRIPTOR_TYPE + 1] = {0};
+	int used_size_ct = 0;
+	for (int i = 0; i <= MAX_DESCRIPTOR_TYPE; i++) {
+		if (sizes[i].descriptorCount > 0) {
+			memcpy(&used_sizes[used_size_ct], &sizes[i], sizeof(sizes[i]));
+			used_size_ct++;
+		}
+	}
 
 	VkDescriptorPoolCreateInfo dpool_info = {0};
 	dpool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-	dpool_info.maxSets = 1;
-	dpool_info.poolSizeCount = 1;
-	dpool_info.pPoolSizes = &dpool_size;
+	dpool_info.maxSets = set_ct;
+	dpool_info.poolSizeCount = used_size_ct;
+	dpool_info.pPoolSizes = used_sizes;
 
 	VkResult res = vkCreateDescriptorPool(device, &dpool_info, NULL, dpool);
 	assert(res == VK_SUCCESS);
@@ -90,9 +106,11 @@ void set_create(VkDevice device, VkDescriptorPool dpool, VkDescriptorSetLayout l
                 writes[i].descriptorType = set_info->descs[i].type;
                 writes[i].descriptorCount = 1;
 
-                if (set_info->descs[i].type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+		VkDescriptorType type = set_info->descs[i].type;
+                if (type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+		    || type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
                         writes[i].pBufferInfo = &set_info->descs[i].buffer;
-                } else if (set_info->descs[i].type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+                } else if (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
                         writes[i].pImageInfo = &set_info->descs[i].image;
                 }
         }
