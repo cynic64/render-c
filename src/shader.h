@@ -34,6 +34,7 @@ void load_shader(VkDevice device, const char* path, VkShaderModule* module,
         free(buf);
 
 	if (pipeline_info != NULL) {
+		bzero(pipeline_info, sizeof(*pipeline_info));
 		pipeline_info->sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
 		pipeline_info->stage = stage;
 		pipeline_info->module = *module;
