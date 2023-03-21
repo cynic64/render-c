@@ -80,7 +80,11 @@ void base_create(GLFWwindow* window,
                 for (int j = 0; j < avail_instance_ext_ct && !found; ++j) {
                         if (strcmp(avail_instance_exts[j].extensionName, ext_want) == 0) found = 1;
                 }
-                assert(found);
+
+		if (!found) {
+			fprintf(stderr, "Couldn't find extension %s\n", ext_want);
+			exit(1);
+		}
         }
 
         free(avail_instance_exts);
@@ -100,7 +104,11 @@ void base_create(GLFWwindow* window,
                         for (int j = 0; j < layer_ct && !found; ++j) {
                                 if (strcmp(layers[j].layerName, want_layer) == 0) found = 1;
                         }
-                        assert(found);
+
+			if (!found) {
+				fprintf(stderr, "Couldn't load layer %s\n", want_layer);
+				exit(1);
+			}
                 }
 
                 free(layers);
