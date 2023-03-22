@@ -10,11 +10,7 @@
 
 struct DescriptorInfo {
         VkDescriptorType type;
-        VkShaderStageFlags shader_stage_flags;
-        // Only for buffers
-        VkDescriptorBufferInfo buffer;
-        // Only for images
-        VkDescriptorImageInfo image;
+        VkShaderStageFlags stage;
 };
 
 struct SetInfo {
@@ -22,6 +18,14 @@ struct SetInfo {
 	struct DescriptorInfo* descs;
 };
 
+// Sets can use buffers or images, so we need to be able to pass either one to `set_create`
+union SetHandle {
+	VkDescriptorBufferInfo buffer;
+	VkDescriptorImageInfo image;
+};
+
+// Don't use this if you have complicated requirements, just do it yourself. If you have different
+// sets for every frame, this function isn't smart enough to work.
 void dpool_create(VkDevice device, int set_ct, int desc_ct,
 		  struct DescriptorInfo* descs, VkDescriptorPool *dpool) {
 	// Create a descriptor pool size for every possible descriptor type. Works because they are
@@ -31,7 +35,7 @@ void dpool_create(VkDevice device, int set_ct, int desc_ct,
 	#define MAX_DESCRIPTOR_TYPE 10
 	VkDescriptorPoolSize sizes[MAX_DESCRIPTOR_TYPE + 1] = {0};
 	for (int i = 0; i <= MAX_DESCRIPTOR_TYPE; i++) {
-		sizes[i].type = i;
+		sizes[i].type = (VkDescriptorType) i;
 		for (int j = 0; j < desc_ct; j++) {
 			if (descs[j].type == i) sizes[i].descriptorCount++;
 		}
@@ -70,7 +74,7 @@ void set_layout_create(VkDevice device, struct SetInfo* set_info, VkDescriptorSe
 		// those for now, so don't bother.
 		bindings[i].descriptorCount = 1;
 		bindings[i].descriptorType = set_info->descs[i].type;
-		bindings[i].stageFlags = set_info->descs[i].shader_stage_flags;
+		bindings[i].stageFlags = set_info->descs[i].stage;
 	}
 
         VkDescriptorSetLayoutCreateInfo info = {0};
@@ -84,8 +88,9 @@ void set_layout_create(VkDevice device, struct SetInfo* set_info, VkDescriptorSe
 	free(bindings);
 }
 
+// `handles` must have set_info->desc_ct elements.
 void set_create(VkDevice device, VkDescriptorPool dpool, VkDescriptorSetLayout layout,
-		struct SetInfo* set_info, VkDescriptorSet *set)
+		struct SetInfo* set_info, union SetHandle* handles, VkDescriptorSet *set)
 {
         VkDescriptorSetAllocateInfo info = {0};
         info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -109,9 +114,9 @@ void set_create(VkDevice device, VkDescriptorPool dpool, VkDescriptorSetLayout l
 		VkDescriptorType type = set_info->descs[i].type;
                 if (type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
 		    || type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
-                        writes[i].pBufferInfo = &set_info->descs[i].buffer;
+                        writes[i].pBufferInfo = &handles[i].buffer;
                 } else if (type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
-                        writes[i].pImageInfo = &set_info->descs[i].image;
+                        writes[i].pImageInfo = &handles[i].image;
                 }
         }
 
