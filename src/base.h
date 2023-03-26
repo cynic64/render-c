@@ -41,9 +41,11 @@ debug_cback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessage
         return VK_FALSE;
 }
 
-void base_create(GLFWwindow *window, int want_debug, int want_compute, uint32_t instance_ext_ct,
-                 const char **instance_exts, uint32_t device_ext_ct, const char **device_exts,
-                 struct Base *base) {
+// `extra_features` gets passed as pNext in VkPhysicalDeviceFeatures2. Use it for stuff like float
+// atomics in shaders.
+void base_create(GLFWwindow *window, uint32_t api_version, int want_debug, int want_compute,
+                 uint32_t instance_ext_ct, const char **instance_exts, uint32_t device_ext_ct,
+                 const char **device_exts, void *extra_features, struct Base *base) {
         // Combine GLFW extensions with whatever user wants and maybe the debug extension
         uint32_t glfw_ext_ct = 0;
         const char **glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_ext_ct);
@@ -139,7 +141,7 @@ void base_create(GLFWwindow *window, int want_debug, int want_compute, uint32_t 
         app_info.pApplicationName = "Thing";
         app_info.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         app_info.pEngineName = "No Engine";
-        app_info.apiVersion = VK_API_VERSION_1_0;
+        app_info.apiVersion = api_version;
 
         VkInstanceCreateInfo instance_info = {0};
         instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -239,18 +241,20 @@ void base_create(GLFWwindow *window, int want_debug, int want_compute, uint32_t 
         assert(real_features.samplerAnisotropy == VK_TRUE);
         assert(real_features.sampleRateShading == VK_TRUE);
 
-        VkPhysicalDeviceFeatures dev_features = {0};
-        dev_features.samplerAnisotropy = VK_TRUE;
-        dev_features.sampleRateShading = VK_TRUE;
+        VkPhysicalDeviceFeatures2 dev_features = {0};
+        dev_features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        dev_features.features.samplerAnisotropy = VK_TRUE;
+        dev_features.features.sampleRateShading = VK_TRUE;
+        dev_features.pNext = extra_features;
 
         VkDeviceCreateInfo device_info = {0};
         device_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         device_info.pQueueCreateInfos = &dev_queue_info;
         device_info.queueCreateInfoCount = 1;
-        device_info.pEnabledFeatures = &dev_features;
         device_info.enabledLayerCount = 0;
         device_info.enabledExtensionCount = device_ext_ct;
         device_info.ppEnabledExtensionNames = device_exts;
+        device_info.pNext = &dev_features;
 
         res = vkCreateDevice(base->phys_dev, &device_info, NULL, &base->device);
         assert(res == VK_SUCCESS);
