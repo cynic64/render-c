@@ -11,31 +11,29 @@
 #include <vulkan/vulkan_core.h>
 
 const int BASE_VALIDATION_LAYER_CT = 1;
-const char* BASE_VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
+const char *BASE_VALIDATION_LAYERS[] = {"VK_LAYER_KHRONOS_validation"};
 
 const int BASE_VALIDATION_INSTANCE_EXT_CT = 1;
-const char* BASE_VALIDATION_INSTANCE_EXTS[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
+const char *BASE_VALIDATION_INSTANCE_EXTS[] = {VK_EXT_DEBUG_UTILS_EXTENSION_NAME};
 
 const size_t BASE_MAX_PUSH_CONSTANT_SIZE = 128;
 
 struct Base {
-	VkInstance instance;
-	VkDebugUtilsMessengerEXT dbg_msgr;
-	VkSurfaceKHR surface;
-	VkPhysicalDevice phys_dev;
-	const char* phys_dev_name;
-	uint32_t queue_fam;
-	VkDevice device;
-	VkQueue queue;
-	VkCommandPool cpool;
-	VkSampleCountFlagBits max_samples;
+        VkInstance instance;
+        VkDebugUtilsMessengerEXT dbg_msgr;
+        VkSurfaceKHR surface;
+        VkPhysicalDevice phys_dev;
+        const char *phys_dev_name;
+        uint32_t queue_fam;
+        VkDevice device;
+        VkQueue queue;
+        VkCommandPool cpool;
+        VkSampleCountFlagBits max_samples;
 };
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-                                                  VkDebugUtilsMessageTypeFlagsEXT type,
-                                                  const VkDebugUtilsMessengerCallbackDataEXT* cback_data,
-                                                  void* user_data)
-{
+static VKAPI_ATTR VkBool32 VKAPI_CALL
+debug_cback(VkDebugUtilsMessageSeverityFlagBitsEXT severity, VkDebugUtilsMessageTypeFlagsEXT type,
+            const VkDebugUtilsMessengerCallbackDataEXT *cback_data, void *user_data) {
         (void)(severity);
         (void)(type);
         (void)(user_data);
@@ -43,48 +41,50 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cback(VkDebugUtilsMessageSeverityFla
         return VK_FALSE;
 }
 
-void base_create(GLFWwindow* window,
-                 int want_debug, int want_compute,
-                 uint32_t instance_ext_ct, const char** instance_exts, 
-                 uint32_t device_ext_ct, const char** device_exts,
-                 struct Base* base)
-{
+void base_create(GLFWwindow *window, int want_debug, int want_compute, uint32_t instance_ext_ct,
+                 const char **instance_exts, uint32_t device_ext_ct, const char **device_exts,
+                 struct Base *base) {
         // Combine GLFW extensions with whatever user wants and maybe the debug extension
         uint32_t glfw_ext_ct = 0;
-        const char** glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_ext_ct);
+        const char **glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_ext_ct);
 
-	uint32_t real_instance_ext_ct = instance_ext_ct + glfw_ext_ct;
-	if (want_debug) real_instance_ext_ct += BASE_VALIDATION_INSTANCE_EXT_CT;
+        uint32_t real_instance_ext_ct = instance_ext_ct + glfw_ext_ct;
+        if (want_debug) {
+                real_instance_ext_ct += BASE_VALIDATION_INSTANCE_EXT_CT;
+        }
 
-        const char** real_instance_exts = malloc(real_instance_ext_ct * sizeof(real_instance_exts[0]));
+        const char **real_instance_exts =
+                malloc(real_instance_ext_ct * sizeof(real_instance_exts[0]));
         for (int i = 0; i < real_instance_ext_ct; ++i) {
                 if (i < glfw_ext_ct) {
                         real_instance_exts[i] = glfw_exts[i];
                 } else if (i < instance_ext_ct + glfw_ext_ct) {
-                        real_instance_exts[i] = instance_exts[i-glfw_ext_ct];
+                        real_instance_exts[i] = instance_exts[i - glfw_ext_ct];
                 } else {
                         real_instance_exts[i] =
-				BASE_VALIDATION_INSTANCE_EXTS[i-glfw_ext_ct-instance_ext_ct];
+                                BASE_VALIDATION_INSTANCE_EXTS[i - glfw_ext_ct - instance_ext_ct];
                 }
         }
 
         // Query extensions
         uint32_t avail_instance_ext_ct = 0;
         vkEnumerateInstanceExtensionProperties(NULL, &avail_instance_ext_ct, NULL);
-        VkExtensionProperties* avail_instance_exts =
-		malloc(avail_instance_ext_ct * sizeof(avail_instance_exts[0]));
+        VkExtensionProperties *avail_instance_exts =
+                malloc(avail_instance_ext_ct * sizeof(avail_instance_exts[0]));
         vkEnumerateInstanceExtensionProperties(NULL, &avail_instance_ext_ct, avail_instance_exts);
         for (int i = 0; i < real_instance_ext_ct; ++i) {
-                const char* ext_want = real_instance_exts[i];
+                const char *ext_want = real_instance_exts[i];
                 int found = 0;
                 for (int j = 0; j < avail_instance_ext_ct && !found; ++j) {
-                        if (strcmp(avail_instance_exts[j].extensionName, ext_want) == 0) found = 1;
+                        if (strcmp(avail_instance_exts[j].extensionName, ext_want) == 0) {
+                                found = 1;
+                        }
                 }
 
-		if (!found) {
-			fprintf(stderr, "Couldn't find extension %s\n", ext_want);
-			exit(1);
-		}
+                if (!found) {
+                        fprintf(stderr, "Couldn't find extension %s\n", ext_want);
+                        exit(1);
+                }
         }
 
         free(avail_instance_exts);
@@ -92,23 +92,32 @@ void base_create(GLFWwindow* window,
         // (Maybe) setup debug messenger and check validation layers
         VkDebugUtilsMessengerCreateInfoEXT debug_info = {0};
 
+        // Will only be set to 1 if the user wants debug AND it's available.
+        int should_enable_debug = 0;
         if (want_debug) {
                 uint32_t layer_ct = 0;
                 vkEnumerateInstanceLayerProperties(&layer_ct, NULL);
-                VkLayerProperties* layers = malloc(layer_ct * sizeof(layers[0]));
+                VkLayerProperties *layers = malloc(layer_ct * sizeof(layers[0]));
                 vkEnumerateInstanceLayerProperties(&layer_ct, layers);
 
+                int all_found = 1;
                 for (int i = 0; i < BASE_VALIDATION_LAYER_CT; ++i) {
-                        const char* want_layer = BASE_VALIDATION_LAYERS[i];
+                        const char *want_layer = BASE_VALIDATION_LAYERS[i];
                         int found = 0;
                         for (int j = 0; j < layer_ct && !found; ++j) {
-                                if (strcmp(layers[j].layerName, want_layer) == 0) found = 1;
+                                if (strcmp(layers[j].layerName, want_layer) == 0) {
+                                        found = 1;
+                                }
                         }
 
-			if (!found) {
-				fprintf(stderr, "Couldn't load layer %s\n", want_layer);
-				exit(1);
-			}
+                        if (!found) {
+                                fprintf(stderr, "Couldn't load layer %s\n", want_layer);
+                                all_found = 0;
+                        }
+                }
+
+                if (all_found) {
+                        should_enable_debug = 1;
                 }
 
                 free(layers);
@@ -116,11 +125,11 @@ void base_create(GLFWwindow* window,
                 // Fill in debug messenger info
                 debug_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
                 // VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT excluded
-                debug_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT
-			| VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-                debug_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT
-			| VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT
-			| VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+                debug_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                             VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+                debug_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                         VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                         VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
                 debug_info.pfnUserCallback = debug_cback;
         }
 
@@ -136,11 +145,13 @@ void base_create(GLFWwindow* window,
         instance_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         instance_info.pApplicationInfo = &app_info;
 
-	if (want_debug) {
-                instance_info.pNext = (VkDebugUtilsMessengerCreateInfoEXT*) &debug_info;
+        if (should_enable_debug) {
+                instance_info.pNext = (VkDebugUtilsMessengerCreateInfoEXT *)&debug_info;
                 instance_info.enabledLayerCount = BASE_VALIDATION_LAYER_CT;
                 instance_info.ppEnabledLayerNames = BASE_VALIDATION_LAYERS;
-	} else instance_info.enabledLayerCount = 0;
+        } else {
+                instance_info.enabledLayerCount = 0;
+        }
 
         instance_info.enabledExtensionCount = real_instance_ext_ct;
         instance_info.ppEnabledExtensionNames = real_instance_exts;
@@ -157,16 +168,18 @@ void base_create(GLFWwindow* window,
         // (Maybe) Create debug messenger
         if (want_debug) {
                 PFN_vkCreateDebugUtilsMessengerEXT debug_create_fun =
-			(PFN_vkCreateDebugUtilsMessengerEXT)
-			vkGetInstanceProcAddr(base->instance, "vkCreateDebugUtilsMessengerEXT");
+                        (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+                                base->instance, "vkCreateDebugUtilsMessengerEXT");
                 assert(debug_create_fun != NULL);
                 debug_create_fun(base->instance, &debug_info, NULL, &base->dbg_msgr);
-        } else base->dbg_msgr = VK_NULL_HANDLE;
+        } else {
+                base->dbg_msgr = VK_NULL_HANDLE;
+        }
 
         // Physical device
         uint32_t phys_dev_ct = 0;
         vkEnumeratePhysicalDevices(base->instance, &phys_dev_ct, NULL);
-        VkPhysicalDevice* phys_devs = malloc(phys_dev_ct * sizeof(phys_devs[0]));
+        VkPhysicalDevice *phys_devs = malloc(phys_dev_ct * sizeof(phys_devs[0]));
         vkEnumeratePhysicalDevices(base->instance, &phys_dev_ct, phys_devs);
         base->phys_dev = phys_devs[0];
         free(phys_devs);
@@ -178,16 +191,19 @@ void base_create(GLFWwindow* window,
         // Queue families
         uint32_t queue_fam_ct = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(base->phys_dev, &queue_fam_ct, NULL);
-        VkQueueFamilyProperties* queue_fam_props = malloc(queue_fam_ct * sizeof(queue_fam_props[0]));
+        VkQueueFamilyProperties *queue_fam_props =
+                malloc(queue_fam_ct * sizeof(queue_fam_props[0]));
         vkGetPhysicalDeviceQueueFamilyProperties(base->phys_dev, &queue_fam_ct, queue_fam_props);
         uint32_t queue_fam = UINT32_MAX;
         for (int i = 0; i < queue_fam_ct && queue_fam == UINT32_MAX; ++i) {
                 int graphics_ok = queue_fam_props[i].queueFlags & VK_QUEUE_GRAPHICS_BIT;
-                int compute_ok = (!want_compute) ||
-			queue_fam_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT;
+                int compute_ok =
+                        (!want_compute) || queue_fam_props[i].queueFlags & VK_QUEUE_COMPUTE_BIT;
                 VkBool32 present_ok = VK_FALSE;
                 vkGetPhysicalDeviceSurfaceSupportKHR(base->phys_dev, i, base->surface, &present_ok);
-                if (graphics_ok && present_ok && compute_ok) queue_fam = i;
+                if (graphics_ok && present_ok && compute_ok) {
+                        queue_fam = i;
+                }
         }
         assert(queue_fam != UINT32_MAX);
         base->queue_fam = queue_fam;
@@ -196,13 +212,15 @@ void base_create(GLFWwindow* window,
         // Query device extensions
         uint32_t real_dev_ext_ct = 0;
         vkEnumerateDeviceExtensionProperties(base->phys_dev, NULL, &real_dev_ext_ct, NULL);
-        VkExtensionProperties* real_dev_exts = malloc(real_dev_ext_ct * sizeof(real_dev_exts[0]));
+        VkExtensionProperties *real_dev_exts = malloc(real_dev_ext_ct * sizeof(real_dev_exts[0]));
         vkEnumerateDeviceExtensionProperties(base->phys_dev, NULL, &real_dev_ext_ct, real_dev_exts);
         for (int i = 0; i < device_ext_ct; ++i) {
-                const char * want_ext = device_exts[i];
+                const char *want_ext = device_exts[i];
                 int found = 0;
                 for (int j = 0; j < real_dev_ext_ct && !found; ++j) {
-                        if (strcmp(real_dev_exts[j].extensionName, want_ext) == 0) found = 1;
+                        if (strcmp(real_dev_exts[j].extensionName, want_ext) == 0) {
+                                found = 1;
+                        }
                 }
                 assert(found);
         }
@@ -251,23 +269,33 @@ void base_create(GLFWwindow* window,
 
         // Make sure we have linear filtering support
         VkFormatProperties dev_format_props;
-        vkGetPhysicalDeviceFormatProperties(base->phys_dev, VK_FORMAT_B8G8R8A8_SRGB, &dev_format_props);
-        assert(dev_format_props.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
+        vkGetPhysicalDeviceFormatProperties(base->phys_dev, VK_FORMAT_B8G8R8A8_SRGB,
+                                            &dev_format_props);
+        assert(dev_format_props.optimalTilingFeatures &
+               VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT);
 
         // Get the max sample count
-        VkSampleCountFlags sample_counts = phys_dev_props.limits.framebufferColorSampleCounts
-                                         & phys_dev_props.limits.framebufferDepthSampleCounts;
-        if (sample_counts & VK_SAMPLE_COUNT_64_BIT) base->max_samples = VK_SAMPLE_COUNT_64_BIT;
-        else if (sample_counts & VK_SAMPLE_COUNT_32_BIT) base->max_samples = VK_SAMPLE_COUNT_32_BIT;
-        else if (sample_counts & VK_SAMPLE_COUNT_16_BIT) base->max_samples = VK_SAMPLE_COUNT_16_BIT;
-        else if (sample_counts & VK_SAMPLE_COUNT_8_BIT) base->max_samples = VK_SAMPLE_COUNT_8_BIT;
-        else if (sample_counts & VK_SAMPLE_COUNT_4_BIT) base->max_samples = VK_SAMPLE_COUNT_4_BIT;
-        else if (sample_counts & VK_SAMPLE_COUNT_2_BIT) base->max_samples = VK_SAMPLE_COUNT_2_BIT;
-        else base->max_samples = VK_SAMPLE_COUNT_1_BIT;
+        VkSampleCountFlags sample_counts = phys_dev_props.limits.framebufferColorSampleCounts &
+                                           phys_dev_props.limits.framebufferDepthSampleCounts;
+        if (sample_counts & VK_SAMPLE_COUNT_64_BIT) {
+                base->max_samples = VK_SAMPLE_COUNT_64_BIT;
+        } else if (sample_counts & VK_SAMPLE_COUNT_32_BIT) {
+                base->max_samples = VK_SAMPLE_COUNT_32_BIT;
+        } else if (sample_counts & VK_SAMPLE_COUNT_16_BIT) {
+                base->max_samples = VK_SAMPLE_COUNT_16_BIT;
+        } else if (sample_counts & VK_SAMPLE_COUNT_8_BIT) {
+                base->max_samples = VK_SAMPLE_COUNT_8_BIT;
+        } else if (sample_counts & VK_SAMPLE_COUNT_4_BIT) {
+                base->max_samples = VK_SAMPLE_COUNT_4_BIT;
+        } else if (sample_counts & VK_SAMPLE_COUNT_2_BIT) {
+                base->max_samples = VK_SAMPLE_COUNT_2_BIT;
+        } else {
+                base->max_samples = VK_SAMPLE_COUNT_1_BIT;
+        }
 }
 
-void base_destroy(struct Base* base) {
-	vkDeviceWaitIdle(base->device);
+void base_destroy(struct Base *base) {
+        vkDeviceWaitIdle(base->device);
 
         vkDestroyCommandPool(base->device, base->cpool, NULL);
 
@@ -275,11 +303,13 @@ void base_destroy(struct Base* base) {
 
         vkDestroySurfaceKHR(base->instance, base->surface, NULL);
 
-	if (base->dbg_msgr != VK_NULL_HANDLE) {
-                PFN_vkDestroyDebugUtilsMessengerEXT dbg_destroy_fun = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(base->instance, "vkDestroyDebugUtilsMessengerEXT");
+        if (base->dbg_msgr != VK_NULL_HANDLE) {
+                PFN_vkDestroyDebugUtilsMessengerEXT dbg_destroy_fun =
+                        (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
+                                base->instance, "vkDestroyDebugUtilsMessengerEXT");
                 assert(dbg_destroy_fun != NULL);
                 dbg_destroy_fun(base->instance, base->dbg_msgr, NULL);
-	}
+        }
 
         vkDestroyInstance(base->instance, NULL);
 }
